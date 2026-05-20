@@ -38,14 +38,15 @@ func TestDemoInstanceServiceCreatesVMContainerAndGPUContainer(t *testing.T) {
 		if len(result.Manifests) != 1 {
 			t.Fatalf("Create(%s) manifests = %d, want 1", kind, len(result.Manifests))
 		}
+		record, err := api.service.Get(context.Background(), ports.WorkloadInstanceGetRequest{
+			TenantID:   result.Ref.TenantID,
+			InstanceID: result.Ref.InstanceID,
+		})
+		if err != nil {
+			t.Fatalf("Get(%s) error = %v", kind, err)
+		}
+		requireLocalCoreDevProfile(t, demoInstanceFromRecord(record).DevProfile, "local-instance-service")
 		if kind == "vm" {
-			record, err := api.service.Get(context.Background(), ports.WorkloadInstanceGetRequest{
-				TenantID:   result.Ref.TenantID,
-				InstanceID: result.Ref.InstanceID,
-			})
-			if err != nil {
-				t.Fatalf("Get(%s) error = %v", kind, err)
-			}
 			if record.SSH == nil || record.SSH.Username == "" || record.SSH.Host == "" || record.SSH.Port != 22 {
 				t.Fatalf("vm ssh = %+v, want connection metadata", record.SSH)
 			}

@@ -1,0 +1,149 @@
+package runtime
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/kubercloud/ani/pkg/ports"
+)
+
+type KubernetesStorageRenderer struct{}
+
+func NewKubernetesStorageRenderer() *KubernetesStorageRenderer {
+	return &KubernetesStorageRenderer{}
+}
+
+func (r *KubernetesStorageRenderer) RenderVolume(_ context.Context, record ports.StorageVolumeRecord) ([]ports.WorkloadManifest, error) {
+	if err := requireStorageRecord(record.TenantID, record.VolumeID, record.Name, record.State); err != nil {
+		return nil, err
+	}
+	if record.SizeGiB <= 0 {
+		return nil, fmt.Errorf("%w: volume size_gib must be greater than zero", ports.ErrInvalid)
+	}
+	name := storageProviderName("vol", record.VolumeID)
+	content := manifest(map[string]any{
+		"apiVersion": "v1",
+		"kind":       "PersistentVolumeClaim",
+		"metadata":   storageProviderNamespacedMetadata(record.TenantID, name, "volume", record.VolumeID),
+		"spec": map[string]any{
+			"accessModes":      []any{"ReadWriteOnce"},
+			"storageClassName": firstNetworkNonEmpty(record.StorageClass, "standard"),
+			"volumeMode":       "Filesystem",
+			"resources":        pvcStorageResources(record.SizeGiB),
+		},
+	})
+	return []ports.WorkloadManifest{{Name: name, Kind: "PersistentVolumeClaim", Provider: "kubernetes", Content: content}}, nil
+}
+
+func (r *KubernetesStorageRenderer) RenderFilesystem(_ context.Context, record ports.StorageFilesystemRecord) ([]ports.WorkloadManifest, error) {
+	if err := requireStorageRecord(record.TenantID, record.FilesystemID, record.Name, record.State); err != nil {
+		return nil, err
+	}
+	if record.SizeGiB <= 0 {
+		return nil, fmt.Errorf("%w: filesystem size_gib must be greater than zero", ports.ErrInvalid)
+	}
+	protocol := strings.ToLower(strings.TrimSpace(record.Protocol))
+	if protocol == "" {
+		protocol = "nfs"
+	}
+	if protocol != "nfs" && protocol != "cephfs" {
+		return nil, fmt.Errorf("%w: unsupported filesystem protocol %q", ports.ErrUnsupported, record.Protocol)
+	}
+	name := storageProviderName("fs", record.FilesystemID)
+	content := manifest(map[string]any{
+		"apiVersion": "v1",
+		"kind":       "PersistentVolumeClaim",
+		"metadata":   storageProviderFilesystemMetadata(record, name, protocol),
+		"spec": map[string]any{
+			"accessModes":      []any{"ReadWriteMany"},
+			"storageClassName": filesystemStorageClass(record, protocol),
+			"volumeMode":       "Filesystem",
+			"resources":        pvcStorageResources(record.SizeGiB),
+		},
+	})
+	return []ports.WorkloadManifest{{Name: name, Kind: "PersistentVolumeClaim", Provider: "kubernetes", Content: content}}, nil
+}
+
+func (r *KubernetesStorageRenderer) RenderObject(_ context.Context, record ports.StorageObjectRecord) ([]ports.WorkloadManifest, error) {
+	if strings.TrimSpace(record.TenantID) == "" {
+		return nil, fmt.Errorf("%w: tenant_id is required", ports.ErrInvalid)
+	}
+	if strings.TrimSpace(record.ObjectID) == "" {
+		return nil, fmt.Errorf("%w: object id is required", ports.ErrInvalid)
+	}
+	if strings.TrimSpace(record.Bucket) == "" || strings.TrimSpace(record.Key) == "" {
+		return nil, fmt.Errorf("%w: bucket and key are required", ports.ErrInvalid)
+	}
+	if record.State == "" {
+		return nil, fmt.Errorf("%w: state is required", ports.ErrInvalid)
+	}
+	if record.SizeBytes < 0 {
+		return nil, fmt.Errorf("%w: object size_bytes must not be negative", ports.ErrInvalid)
+	}
+	name := storageProviderName("obj", record.ObjectID)
+	content := manifest(map[string]any{
+		"apiVersion": "ani.kubercloud.io/v1alpha1",
+		"kind":       "ObjectMetadata",
+		"metadata": map[string]any{
+			"name":   name,
+			"labels": storageProviderLabels(record.TenantID, "object", record.ObjectID),
+		},
+		"spec": map[string]any{
+			"tenantID":    record.TenantID,
+			"bucket":      record.Bucket,
+			"key":         record.Key,
+			"sizeBytes":   record.SizeBytes,
+			"contentType": firstNetworkNonEmpty(record.ContentType, "application/octet-stream"),
+		},
+	})
+	return []ports.WorkloadManifest{{Name: name, Kind: "ObjectMetadata", Provider: "objectstore", Content: content}}, nil
+}
+
+func storageProviderNamespacedMetadata(tenantID string, name string, resourceKind string, resourceID string) map[string]any {
+	return map[string]any{
+		"name":      name,
+		"namespace": tenantNamespace(tenantID),
+		"labels":    storageProviderLabels(tenantID, resourceKind, resourceID),
+	}
+}
+
+func storageProviderFilesystemMetadata(record ports.StorageFilesystemRecord, name string, protocol string) map[string]any {
+	metadata := storageProviderNamespacedMetadata(record.TenantID, name, "filesystem", record.FilesystemID)
+	metadata["annotations"] = map[string]string{
+		"ani.kubercloud.io/filesystem-protocol": protocol,
+		"ani.kubercloud.io/filesystem-endpoint": record.Endpoint,
+	}
+	return metadata
+}
+
+func storageProviderLabels(tenantID string, resourceKind string, resourceID string) map[string]string {
+	return map[string]string{
+		"app.kubernetes.io/part-of":          "ani-platform",
+		"app.kubernetes.io/managed-by":       "ani-core",
+		"ani.kubercloud.io/tenant-id":        tenantID,
+		"ani.kubercloud.io/storage-kind":     resourceKind,
+		"ani.kubercloud.io/storage-resource": resourceID,
+	}
+}
+
+func pvcStorageResources(sizeGiB int64) map[string]any {
+	return map[string]any{
+		"requests": map[string]any{
+			"storage": fmt.Sprintf("%dGi", sizeGiB),
+		},
+	}
+}
+
+func filesystemStorageClass(record ports.StorageFilesystemRecord, protocol string) string {
+	if protocol == "cephfs" {
+		return firstNetworkNonEmpty(record.Protocol, "cephfs")
+	}
+	return firstNetworkNonEmpty(record.Protocol, "nfs")
+}
+
+func storageProviderName(prefix string, value string) string {
+	return networkProviderName(prefix, value)
+}
+
+var _ ports.StorageProviderRenderer = (*KubernetesStorageRenderer)(nil)

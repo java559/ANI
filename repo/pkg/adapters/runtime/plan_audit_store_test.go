@@ -26,13 +26,15 @@ func (s fakeMetadataStore) WithPlatformTx(ctx context.Context, fn func(context.C
 }
 
 type fakeMetadataTx struct {
-	sql  string
-	args []any
+	sql   string
+	args  []any
+	execs []string
 }
 
 func (tx *fakeMetadataTx) Exec(_ context.Context, sql string, args ...any) (ports.CommandTag, error) {
 	tx.sql = sql
 	tx.args = args
+	tx.execs = append(tx.execs, sql)
 	return ports.CommandTag{RowsAffected: 1}, nil
 }
 

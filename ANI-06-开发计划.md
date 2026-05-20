@@ -23,12 +23,12 @@
 ### 项目全局进度
 
 ```
-当前阶段：Phase 1 / Sprint 3（Core API 面扩充 + SDK Alpha + Dev Profile Ready）
+当前阶段：Phase 1 / Sprint 4（API Beta 准备 + SDK 加固 + Mock Server）
 当前不是 Phase 2：Phase 2 指 2026-10 以后延期能力，不是下一次开发阶段
 交付目标：2026-09-30 ANI Core v1.0.0 + ANI Services P0
 关键节奏：ANI Core 必须先在 2026-06 上中旬解锁 ANI Services 开发，不能等到 2026-09-30 才完成接口与 SDK
-刚完成：Sprint 2（2026-05-20，Core API Alpha Freeze + VM/Container/GPU 本地 profile）
-下一步：按 repo/CURRENT-SPRINT.md 执行 Sprint 3
+刚完成：Sprint 3（2026-05-20，网络/存储/向量/Workload Identity/SDK Alpha/Core Dev Profile Ready）
+下一步：按 repo/CURRENT-SPRINT.md 执行 Sprint 4
 ```
 
 | 阶段 | 状态 | 完成时间 | 说明 |
@@ -38,8 +38,8 @@
 | **V8 架构重规划** | ✅ 已完成 | 2026-05-15 | Core/Services 分层、AWS 工程加固 |
 | **Sprint 1** | ✅ 已完成 | 2026-05-18 | 操作语义底座 + Health + Idempotency + Auth Final |
 | **Sprint 2** | ✅ 已完成 | 2026-05-20 | VM & Container/GPU 深度 + **Core API Alpha Freeze** |
-| Sprint 3 ⭐（当前） | 🔄 提前启动 | 2026-05-20 起；计划窗口 2026-06-16~06-30 | 网络/存储/向量 API + **SDK Alpha + Dev Profile Ready** |
-| Sprint 4 | ⏳ 计划中 | 2026-07-01~07-15 | API Beta 准备 + 四语言 SDK + Mock Server |
+| Sprint 3 | ✅ 已完成 | 2026-05-20 | 网络/存储/向量 API + **SDK Alpha + Dev Profile Ready** |
+| Sprint 4 ⭐（当前） | 🔄 提前启动 | 2026-05-20 起；计划窗口 2026-07-01~07-15 | API Beta 准备 + 四语言 SDK + Mock Server |
 | Sprint 5 | ⏳ 计划中 | 2026-07-16~07-31 | **K8s集群(vCluster)** + 控制器 + 加解密 ← K8S-A 恢复 v1.0.0 |
 | Sprint 6 | ⏳ 计划中 | 2026-08-01~08-15 | Sandbox + 平台支撑 + Services 模型仓库/推理 |
 | Sprint 7 | ⏳ 计划中 | 2026-08-16~09-01 | Installer + 知识库 RAG（从零建）+ Console Alpha |
@@ -57,7 +57,7 @@ ANI Core 的 Phase 1 有两个交付对象：先交付给 ANI Services 开发团
 | **2026-05-31** | P0 依赖矩阵冻结 | VM/GPU/存储/网络/Auth/Operation/SDK/API 依赖全列清楚，能力标注 current/target maturity | 产品页面、业务流和前端信息架构设计 |
 | **2026-06-10** | Core API Alpha Freeze | P0 path/schema/error/state/RBAC scope 基本冻结，breaking change 需 CTO/架构负责人批准 | 生成 SDK、写 client、写 mock 集成 |
 | **2026-06-20** | SDK Alpha | Go/Python/TypeScript/Java SDK 可生成、可 import，核心示例可编译 | Services 后端开始真实代码开发 |
-| **2026-06-30** | Core Dev Profile Ready | P0 API 具备 dev/local profile 或 contract-compatible mock，状态机和错误语义与真实实现一致 | Services 可做端到端开发与 Console 联调 |
+| **2026-06-30** | Core Dev Profile Ready | Core P0 API 具备 dev/local profile，状态机和错误语义与真实实现一致；不包含 Services 业务 mock | Services 可通过 Core SDK/API 做端到端开发与 Console 联调 |
 | **2026-07-31** | Core Real Path Beta | VM/GPU Container 主链路真实跑通，含网络、存储、Auth/RBAC/RLS、审计、幂等和 operation timeline | Services 开始真实 provider 联调 |
 | **2026-08-15** | Core API Beta Freeze | Services P0 依赖 API 禁止 breaking change，缺口必须有 owner/date | Services 功能冻结，集中修 bug |
 | **2026-08-31** | Core Integration RC | Services 依赖缺口清零，部署和集成文档可演练 | 全项目联调、验收文档、部署演练 |
@@ -66,16 +66,26 @@ ANI Core 的 Phase 1 有两个交付对象：先交付给 ANI Services 开发团
 
 **硬规则：** 凡是 ANI Services Phase 1 P0 场景依赖的 Core 能力，不允许在对应 Runtime Ready 日期后仍停留在 `contract`、`local-profile`、stub、mock success 或 `NOT_IMPLEMENTED`。
 
-### 当前冲刺：Sprint 3（2026-05-20 提前启动 → 2026-06-30）
+### 已完成冲刺：Sprint 3（2026-05-20）
 
 | 批次 | 优先级 | 状态 |
 |---|---|---|
-| M1-NETWORK-A（网络 API 面）| P0 ⭐ | 🔄 当前优先：VPC/子网/安全组/LB Core API 契约与 dev/local profile |
-| M1-STORAGE-A（存储 API 面）| P0 | ⏳ 待开始：volumes/filesystems/objects Core API 契约与 dev/local profile |
-| M1-VSTORE-A（vector-stores API）| P0 | ⏳ 待开始：Milvus adapter 边界下的 vector-stores Core API |
-| M1-WKID-A（Workload Identity）| P0 | ⏳ 待开始：实例生命周期绑定 scoped API key |
-| SDK-ALPHA-A（四语言 SDK Alpha）| P0 ⭐ | ⏳ 待开始：生成、import、compile smoke test |
-| MOCK-DEV-A（Core dev/mock profile）| P0 | ⏳ 待开始：状态机和错误语义对齐真实实现 |
+| M1-NETWORK-A（网络 API 面）| P0 ⭐ | ✅ 主链路已闭环：VPC/子网/安全组/LB Core API dev profile、持久化边界、provider 渲染、dry-run/apply gate、状态读取和状态回写已完成 |
+| M1-STORAGE-A（存储 API 面）| P0 | ✅ 主链路已闭环：volumes/filesystems/objects Core API dev profile、持久化边界、provider 渲染、dry-run/apply gate、状态读取和状态回写已完成 |
+| M1-VSTORE-A（vector-stores API）| P0 | ✅ Core API dev profile 已完成：vector-stores 契约、Gateway 路由、local search profile 和合同守卫已完成 |
+| M1-WKID-A（Workload Identity）| P0 | ✅ P0 主链路已完成：lifecycle-bound scoped API key、Secret 引用注入、delete revoke 和 timeline 已闭环 |
+| SDK-ALPHA-A（四语言 SDK Alpha）| P0 ⭐ | ✅ Alpha 生成和 smoke 门禁已完成：Core/Services 四语言 SDK 生成、分层隔离和 smoke 校验 |
+| CORE-DEV-PROFILE-A（原 MOCK-DEV-A）| P0 | ✅ 已完成：Core P0 API dev/local profile 显式标记、合同守卫和 SDK 对齐；不做 Services 业务 mock |
+
+### 当前冲刺：Sprint 4（2026-05-20 提前启动 → 2026-07-15）
+
+| 批次 | 优先级 | 状态 |
+|---|---|---|
+| SPEC-SPLIT-A | P0 | ✅ 已完成：Core/Services API 分层收口，Services 业务路径迁移到 `api/openapi/services/v1.yaml`，Gateway 改挂 `/api/v1/svc` |
+| SPEC-CORE-BETA | P0 | ⏳ 待开始：Sprint 1-3 新路径 Beta 化审查 |
+| SDK-GO-A / SDK-PY-A / SDK-TS-A / SDK-JAVA-A | P0 | ⏳ 待开始：四语言 SDK 加固 |
+| MOCK-A | P0 | ⏳ 待开始：Core Mock Server |
+| DOC-API-A | P0 | ⏳ 待开始：API 文档生成 |
 
 **→ 今天该做什么，只看 [`repo/CURRENT-SPRINT.md`](repo/CURRENT-SPRINT.md)。**
 
@@ -97,7 +107,7 @@ ANI Core 的 Phase 1 有两个交付对象：先交付给 ANI Services 开发团
 ### v1.0.0 后续延期项（不是当前下一阶段）
 
 > ⚠️ **M1-K8S-A 已从延期列表移回 v1.0.0 范围（Sprint 5）**，理由见 Sprint 5 说明。
-> 这里的延期项不是 Sprint 3 当前优先要做的任务；当前下一阶段仍是网络/存储/向量 API 与 SDK Alpha 解锁。
+> 这里的延期项不是 Sprint 4 当前优先要做的任务；当前下一阶段是 API Beta 准备与 SDK/Mock Server 加固。
 
 | 条目 | 理由 |
 |---|---|
@@ -262,9 +272,9 @@ make test
 | **M1-NETWORK-A** | VPC/子网/安全组/LB CRUD：真实 KubeOVN 子资源管理 | 中 | 4天 |
 | **M1-STORAGE-A** | 块存储(volumes) + 文件存储(filesystems) + 对象存储(objects) CRUD | 中 | 4天 |
 | **M1-VSTORE-A** | vector-stores 创建/删除/检索 API（Milvus adapter 已有，加 Gateway 路由）| 低 | 2天 |
-| **M1-WKID-A** | Workload Identity P0：实例创建时生成 lifecycle-bound API key + 实例删除时 revoke | 中 | 2天 |
+| **M1-WKID-A** | Workload Identity P0：实例创建时生成 lifecycle-bound API key + Secret 引用注入 + 实例删除时 revoke | 中 | ✅ 已完成 |
 | **SDK-ALPHA-A** ⭐ | Go/Python/TypeScript/Java SDK Alpha：生成、import、compile smoke test | 中 | 2天 |
-| **MOCK-DEV-A** | Core dev profile / mock profile，语义对齐真实状态机和错误码 | 中 | 2天 |
+| **CORE-DEV-PROFILE-A（原 MOCK-DEV-A）** | ✅ 已完成：Core dev/local profile 一致性收口；本地成功响应显式暴露 `dev_profile`，并通过合同守卫防止 Services 业务 mock 与 Core P0 路径混淆 | 中 | 2天 |
 
 **完工标准：**
 ```bash
@@ -274,7 +284,7 @@ make test
 # POST /api/v1/vector-stores → 201；POST /{id}/search → 200
 # 新实例的 ANI_WORKLOAD_TOKEN 环境变量已注入 + 实例删除后自动 revoked
 make gen-core-sdk        # Go/Python/TypeScript/Java SDK 可生成
-# Services 团队可用 SDK + dev profile 做端到端开发，不手写 Core URL
+# Services 团队可用 SDK + Core dev profile 做端到端开发；Services 业务 mock 由 Services 团队自行建设
 ```
 
 **解锁：** ANI Services 团队开始真实开发；Sprint 4 进入 API Beta 准备和 SDK 加固
@@ -533,7 +543,7 @@ ANI Core：
   [ ] 向量存储 API
   [ ] 国密 SM4 加解密（seal/unseal）
   [ ] Secrets API + 实例绑定注入
-  [ ] Workload Identity（lifecycle-bound token）
+  [x] Workload Identity（lifecycle-bound scoped API key P0）
   [ ] WorkloadReconcileController 后台运行
   [ ] 镜像仓库 API（Harbor 封装）
   [ ] 用量计量 API
@@ -1437,10 +1447,12 @@ M5（9月）
 
 **代码批次规划：**
 
-- [ ] `M1-NETWORK-A`：VPC + 子网 CRUD API
+- [x] `M1-NETWORK-A`：VPC + 子网 + 安全组 + LB Core API 主链路
   - `POST/GET/DELETE /api/v1/networks/vpcs`
   - `POST/GET/DELETE /api/v1/networks/subnets`
-  - VPC 创建自动关联 KubeOVN subnet CRD，RLS 租户隔离
+  - `POST/GET/DELETE /api/v1/networks/security-groups`
+  - `POST/GET/DELETE /api/v1/networks/load-balancers`
+  - 已完成 dev/local profile、持久化边界、KubeOVN provider 渲染、dry-run/apply gate、状态读取和状态回写
 
 - [ ] `M1-NETWORK-B`：安全组 + 路由表 API
   - `CRUD /api/v1/networks/security-groups`（出入站规则管理）
@@ -1457,9 +1469,15 @@ M5（9月）
 
 **代码批次规划：**
 
-- [ ] `M1-STORAGE-A`：块存储 + 对象存储服务层 API
-  - `CRUD /api/v1/volumes`（含挂载/卸载/快照）
-  - `CRUD /api/v1/objects/buckets`（含预签名 URL 生成）
+- [x] `M1-STORAGE-A` 首个切片：块存储 + 文件存储 + 对象元数据 Core API dev profile
+  - `CRUD /api/v1/volumes`
+  - `CRUD /api/v1/filesystems`
+  - `CRUD /api/v1/objects`
+  - 已完成 API 契约、Gateway dev/local profile、租户隔离和合同守卫
+  - 已完成 `StorageResourceStore`、metadata adapter、RLS 迁移和持久化单元测试
+  - 已完成 `StorageProviderRenderer`、PVC manifest、objectstore metadata intent 和渲染单元测试
+  - 已完成 `StorageProviderDryRun` / `StorageProviderApply`、Kubernetes PVC server-side dry-run、默认关闭 apply gate 和 objectstore 执行边界保留
+  - 已完成 `StorageProviderStatusReader` / `StorageStatusReconciler`、PVC 状态读取、state/reason 映射和 metadata 回写
 
 - [ ] `M1-STORAGE-B`：文件存储 API（新存储类型）
   - `POST/GET/DELETE /api/v1/filesystems`
@@ -1467,10 +1485,17 @@ M5（9月）
   - `GET /api/v1/filesystems/{id}/usage`
   - 底层：Rook-CephFS subvolume 或 NFS 导出
 
-- [ ] `M1-VSTORE-A`：向量存储 API（新 Core API 域）
+- [x] `M1-VSTORE-A`：向量存储 API（新 Core API 域）
   - `POST/DELETE /api/v1/vector-stores`（映射 Milvus Collection）
   - `POST /api/v1/vector-stores/{id}/search`（语义检索）
   - Milvus SDK 封装在 adapter，business layer 不直接调用
+  - 已完成 Core API 契约、Gateway dev/local profile、租户隔离、search 响应结构和合同守卫
+
+- [x] `SDK-ALPHA-A`：四语言 SDK Alpha 生成与 smoke
+  - Core SDK 从 `api/openapi/v1.yaml` 生成
+  - Services SDK 从 `api/openapi/services/v1.yaml` 生成
+  - 已完成 Go/Python/TypeScript/Java 生成物、Core/Services 分层隔离和 `make validate-sdk-alpha`
+  - Java smoke 在有 JDK 的环境执行 compile/run；当前本机缺少 Java Runtime 时降级为 source smoke
 
 ### 模块 M1-BM：裸金属实例
 

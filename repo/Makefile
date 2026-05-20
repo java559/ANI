@@ -2,10 +2,10 @@
 # 使用方式：make <target>
 
 .PHONY: help deps deps-down deps-status deps-clean \
-        tools-proto gen-api gen-proto \
+        tools-proto gen-api gen-proto gen-core-sdk \
         build build-gateway build-auth-service build-model-service build-task-service \
         test test-go test-python test-cover \
-        validate-infra validate-gpu-preflight validate-gpu-contracts validate-runtime-contracts validate-instance-contracts validate-instance-planner validate-instance-renderer validate-instance-admission validate-instance-audit validate-instance-provider-dry-run validate-instance-provider-apply validate-instance-status-reconcile validate-instance-orchestrator validate-instance-store validate-instance-provider-adapter validate-instance-service validate-instance-lifecycle-ops validate-m1-e2e validate-kubernetes-provider-execution validate-kubernetes-rest-client validate-kubernetes-bootstrap-wiring validate-kubernetes-lifecycle-execution validate-kubernetes-ops-execution validate-m1-real-provider-profile validate-demo-instances validate-core-alpha validate-auth-contract validate-auth-dex-smoke validate-architecture \
+        validate-infra validate-gpu-preflight validate-gpu-contracts validate-runtime-contracts validate-instance-contracts validate-instance-planner validate-instance-renderer validate-instance-admission validate-instance-audit validate-instance-provider-dry-run validate-instance-provider-apply validate-instance-status-reconcile validate-instance-orchestrator validate-instance-store validate-instance-provider-adapter validate-instance-service validate-instance-lifecycle-ops validate-m1-e2e validate-kubernetes-provider-execution validate-kubernetes-rest-client validate-kubernetes-bootstrap-wiring validate-kubernetes-lifecycle-execution validate-kubernetes-ops-execution validate-m1-real-provider-profile validate-demo-instances validate-core-alpha validate-network-alpha validate-storage-alpha validate-vector-alpha validate-workload-identity validate-core-dev-profile validate-sdk-alpha validate-sprint3-closure validate-spec-split validate-auth-contract validate-auth-dex-smoke validate-architecture \
         lint lint-go lint-python lint-ts \
         dev-gateway dev-console \
         image image-gateway \
@@ -25,6 +25,7 @@ help:
 	@echo "    make tools-proto    安装本地 Protobuf 生成插件"
 	@echo "    make gen-api        从 OpenAPI Spec 生成 Go/TS 代码"
 	@echo "    make gen-proto      从 Protobuf 生成 Go gRPC 代码"
+	@echo "    make gen-core-sdk   从 Core/Services API 契约生成四语言 SDK Alpha"
 	@echo ""
 	@echo "  构建:"
 	@echo "    make build          构建所有 Go 服务和工具"
@@ -62,6 +63,14 @@ help:
 	@echo "    make validate-m1-real-provider-profile 校验 M1-E2E-B real provider 回归剖面"
 	@echo "    make validate-demo-instances 校验阶段性实例 Demo API"
 	@echo "    make validate-core-alpha 校验 Sprint 2 Core API Alpha 契约"
+	@echo "    make validate-network-alpha 校验 Sprint 3 网络资源 Core API 契约"
+	@echo "    make validate-storage-alpha 校验 Sprint 3 存储资源 Core API 契约"
+	@echo "    make validate-vector-alpha 校验 Sprint 3 向量存储 Core API 契约"
+	@echo "    make validate-workload-identity 校验 Sprint 3 Workload Identity 契约"
+	@echo "    make validate-core-dev-profile 校验 Sprint 3 Core dev/local profile 边界"
+	@echo "    make validate-sdk-alpha 校验 Sprint 3 四语言 SDK Alpha"
+	@echo "    make validate-sprint3-closure 校验 Sprint 3 闭环审查门禁"
+	@echo "    make validate-spec-split 校验 Sprint 4 Core/Services API 分层"
 	@echo "    make validate-auth-contract 校验 M2.2 Auth Gateway/API 契约一致性"
 	@echo "    make validate-auth-dex-smoke 校验 M2.2 Docker Dex OIDC auth-code flow（需 Docker）"
 	@echo "    make validate-architecture 校验 ports/adapters 组件边界"
@@ -122,6 +131,11 @@ gen-proto: tools-proto
 	@echo "→ 从 Protobuf 生成 Go gRPC 代码..."
 	cd api/proto && PATH="$(TOOLS_BIN):$$PATH" $(BUF_CACHE_ENV) buf generate --template buf.gen.yaml .
 	@echo "✅ Protobuf 代码生成完成"
+
+gen-core-sdk:
+	@echo "→ 从 Core/Services API 契约生成四语言 SDK Alpha..."
+	python scripts/gen_sdk_alpha.py
+	@echo "✅ SDK Alpha 生成完成"
 
 # ── 构建 ──────────────────────────────────────────────────────────────────────
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -387,6 +401,58 @@ validate-core-alpha:
 	@echo "→ 校验 Sprint 2 Core API Alpha 契约..."
 	python scripts/validate_core_alpha_contract.py
 	@echo "✅ Core API Alpha contract valid"
+
+validate-network-alpha:
+	@echo "→ 校验 Sprint 3 网络资源 Core API 契约..."
+	python scripts/validate_network_alpha_contract.py
+	$(GO_CACHE_ENV) go test ./pkg/adapters/runtime ./services/ani-gateway/internal/router -run 'TestLocalNetworkService|TestMetadataNetworkStore|TestLocalNetworkStatusReconciler|TestKubeOVNNetworkRenderer|TestKubeOVNNetworkProvider|TestKubernetesRESTClientSupports.*Network|TestKubernetesRESTClientObserves.*Network|TestKubernetesRESTClientMapsNetwork|TestNetworkAPI' -v
+	@echo "✅ network Core API contract valid"
+
+validate-storage-alpha:
+	@echo "→ 校验 Sprint 3 存储资源 Core API 契约..."
+	python scripts/validate_storage_alpha_contract.py
+	$(GO_CACHE_ENV) go test ./pkg/adapters/runtime ./services/ani-gateway/internal/router -run 'TestLocalStorageService|TestMetadataStorageStore|TestLocalStorageStatusReconciler|TestKubernetesStorageRenderer|TestKubernetesStorageProvider|TestKubernetesRESTClientObservesStorage|TestKubernetesRESTClientMapsStorage|TestStorageAPI' -v
+	@echo "✅ storage Core API contract valid"
+
+validate-vector-alpha:
+	@echo "→ 校验 Sprint 3 向量存储 Core API 契约..."
+	python scripts/validate_vector_alpha_contract.py
+	$(GO_CACHE_ENV) go test ./pkg/adapters/runtime ./services/ani-gateway/internal/router -run 'TestLocalVectorStoreService|TestVectorStoreAPI' -v
+	@echo "✅ vector store Core API contract valid"
+
+validate-workload-identity:
+	@echo "→ 校验 Sprint 3 Workload Identity 契约..."
+	python scripts/validate_workload_identity_contract.py
+	$(GO_CACHE_ENV) go test ./pkg/adapters/runtime ./pkg/bootstrap ./services/ani-gateway/internal/router -run 'TestLocalInstanceService.*WorkloadIdentity|TestKubernetesDryRunRendererInjectsWorkloadIdentity|TestNewCapabilitiesDefaultsToLocalProviderAdapters|TestDemoInstance' -v
+	@echo "✅ workload identity contract valid"
+
+validate-core-dev-profile:
+	@echo "→ 校验 Sprint 3 Core dev/local profile 边界..."
+	python scripts/validate_core_dev_profile_contract.py
+	$(GO_CACHE_ENV) go test ./services/ani-gateway/internal/router -run 'TestDemoInstance|TestNetworkAPI|TestStorageAPI|TestVectorStoreAPI' -v
+	@echo "✅ Core dev/local profile contract valid"
+
+validate-sdk-alpha:
+	@echo "→ 校验 Sprint 3 四语言 SDK Alpha..."
+	python scripts/validate_sdk_alpha.py
+	@echo "✅ SDK Alpha valid"
+
+validate-sprint3-closure:
+	@echo "→ 校验 Sprint 3 闭环审查门禁..."
+	python scripts/validate_sprint3_closure.py
+	$(MAKE) validate-network-alpha
+	$(MAKE) validate-storage-alpha
+	$(MAKE) validate-vector-alpha
+	$(MAKE) validate-workload-identity
+	$(MAKE) validate-sdk-alpha
+	$(MAKE) validate-core-dev-profile
+	@echo "✅ Sprint 3 closure valid"
+
+validate-spec-split:
+	@echo "→ 校验 Sprint 4 SPEC-SPLIT-A Core/Services API 分层..."
+	python scripts/validate_spec_split_contract.py
+	$(GO_CACHE_ENV) go test ./services/ani-gateway/internal/middleware ./services/ani-gateway/internal/router -run 'TestInferPermission|TestAuthPublicPaths|TestAuthProtectedPaths' -v
+	@echo "✅ SPEC-SPLIT-A contract valid"
 
 validate-auth-contract:
 	@echo "→ 校验 M2.2 Auth Gateway/API 契约..."

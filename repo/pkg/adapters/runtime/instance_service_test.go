@@ -99,6 +99,54 @@ func TestLocalInstanceServiceCreateRecordsOperationAndIdempotency(t *testing.T) 
 	}
 }
 
+func TestLocalInstanceServiceCreateBindsWorkloadIdentity(t *testing.T) {
+	orchestrator := &fakeInstanceOrchestrator{}
+	operations := NewLocalOperationStore()
+	identity := NewLocalWorkloadIdentityService(WithWorkloadIdentityClock(func() time.Time {
+		return time.Unix(1100, 0)
+	}))
+	service := NewLocalInstanceServiceWithOptions(
+		orchestrator,
+		&fakeInstanceStore{},
+		NewLocalInstanceOpsGuard(),
+		WithOperationStore(operations),
+		WithWorkloadIdentityService(identity),
+	)
+
+	result, err := service.Create(context.Background(), ports.WorkloadInstanceCreateRequest{
+		IdempotencyKey: "create-with-identity",
+		Spec: ports.WorkloadSpec{
+			TenantID: "tenant-a",
+			Name:     "app-01",
+			Kind:     ports.WorkloadKindContainer,
+			Image:    "harbor/app:1",
+		},
+		UserID:          "user-a",
+		PermissionProof: "rbac:create:workload",
+		RequestedAt:     time.Unix(1090, 0),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if result.Identity == nil || result.Identity.KeyValue == "" || !result.Identity.Active {
+		t.Fatalf("identity = %+v, want active one-time key binding", result.Identity)
+	}
+	record, err := identity.GetForInstance(context.Background(), "tenant-a", result.Ref.InstanceID)
+	if err != nil {
+		t.Fatalf("GetForInstance() error = %v", err)
+	}
+	if record.KeyValue != "" || record.KeyPrefix != result.Identity.KeyPrefix {
+		t.Fatalf("record identity = %+v, want persisted summary without key value", record)
+	}
+	operation, err := operations.GetOperation(context.Background(), "tenant-a", result.OperationID)
+	if err != nil {
+		t.Fatalf("GetOperation error = %v", err)
+	}
+	if !hasOperationStep(operation.Steps, "workload_identity_bind", ports.WorkloadOperationStepSucceeded) {
+		t.Fatalf("steps = %#v, want workload_identity_bind succeeded", operation.Steps)
+	}
+}
+
 func TestLocalInstanceServiceCreateIdempotencyInProgressDoesNotRecreate(t *testing.T) {
 	operations := NewLocalOperationStore()
 	existing, _, err := operations.RecordOperation(context.Background(), ports.WorkloadOperationRecord{
@@ -237,6 +285,59 @@ func TestLocalInstanceServiceLifecycleOperationsUpdateStore(t *testing.T) {
 	}
 	if record.Status.State != ports.WorkloadStateDeleted {
 		t.Fatalf("state = %s, want deleted", record.Status.State)
+	}
+}
+
+func TestLocalInstanceServiceDeleteRevokesWorkloadIdentity(t *testing.T) {
+	store := &fakeInstanceStore{
+		last: ports.WorkloadInstanceRecord{
+			TenantID:   "tenant-a",
+			InstanceID: "instance-a",
+			Name:       "app-01",
+			Kind:       ports.WorkloadKindContainer,
+			Status: ports.WorkloadStatus{
+				State: ports.WorkloadStateRunning,
+			},
+		},
+	}
+	operations := NewLocalOperationStore()
+	identity := NewLocalWorkloadIdentityService()
+	if _, err := identity.BindScopedKey(context.Background(), ports.WorkloadIdentityBindRequest{
+		TenantID:     "tenant-a",
+		InstanceID:   "instance-a",
+		InstanceName: "app-01",
+		Kind:         ports.WorkloadKindContainer,
+	}); err != nil {
+		t.Fatalf("BindScopedKey error = %v", err)
+	}
+	service := NewLocalInstanceServiceWithOptions(
+		&fakeInstanceOrchestrator{},
+		store,
+		NewLocalInstanceOpsGuard(),
+		WithOperationStore(operations),
+		WithWorkloadIdentityService(identity),
+	)
+
+	record, err := service.Delete(context.Background(), ports.WorkloadInstanceLifecycleRequest{
+		IdempotencyKey:  "delete-instance-a",
+		TenantID:        "tenant-a",
+		InstanceID:      "instance-a",
+		UserID:          "user-a",
+		PermissionProof: "rbac:delete:workload",
+		RequestedAt:     time.Unix(1250, 0),
+	})
+	if err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if record.Identity == nil || record.Identity.Active {
+		t.Fatalf("identity = %+v, want revoked binding", record.Identity)
+	}
+	operation, err := operations.GetOperation(context.Background(), "tenant-a", record.OperationID)
+	if err != nil {
+		t.Fatalf("GetOperation error = %v", err)
+	}
+	if !hasOperationStep(operation.Steps, "workload_identity_revoke", ports.WorkloadOperationStepSucceeded) {
+		t.Fatalf("steps = %#v, want workload_identity_revoke succeeded", operation.Steps)
 	}
 }
 
@@ -792,3 +893,12 @@ func (e *fakeLifecycleExecutor) Apply(_ context.Context, request ports.WorkloadI
 }
 
 var _ ports.WorkloadInstanceLifecycleExecutor = (*fakeLifecycleExecutor)(nil)
+
+func hasOperationStep(steps []ports.WorkloadOperationStep, name string, status ports.WorkloadOperationStepStatus) bool {
+	for _, step := range steps {
+		if step.StepName == name && step.Status == status {
+			return true
+		}
+	}
+	return false
+}

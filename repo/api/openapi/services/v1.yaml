@@ -5,12 +5,12 @@ info:
   version: 1.0.0
   description: |
     ANI Services 层 REST API 契约。由 ANI Services 团队维护。
-    SPEC-SPLIT-A 迁移完成后，/models /inference-services /knowledge-bases
-    将从 v1.yaml 移至本文件。
+    models、inference-services、knowledge-bases 等业务资源只在本文件维护；
+    ANI Core API 不承载这些业务路径。
 
 servers:
-  - url: https://{host}/models/v1
-    description: 模型仓库（独立 base path，可单独部署）
+  - url: https://{host}/api/v1/svc
+    description: ANI Services API base path
     variables:
       host: { default: ani.internal }
 
@@ -18,6 +18,33 @@ components:
   securitySchemes:
     BearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
     ApiKeyAuth:  { type: apiKey, in: header, name: X-API-Key }
+
+  responses:
+    BadRequest:
+      description: 请求参数错误
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Unauthorized:
+      description: 未认证
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Forbidden:
+      description: 无权限
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    NotFound:
+      description: 资源不存在
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Conflict:
+      description: 资源冲突
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
 
   schemas:
     ErrorResponse:
@@ -28,6 +55,29 @@ components:
         message:    { type: string }
         request_id: { type: string }
         details:    { type: object, additionalProperties: true }
+
+    CursorPage:
+      type: object
+      properties:
+        next_cursor: { type: string, nullable: true }
+
+    AsyncTask:
+      type: object
+      required: [id, idempotency_key, task_type, status, created_at]
+      properties:
+        id:               { type: string, format: uuid }
+        idempotency_key:  { type: string }
+        task_type:        { type: string }
+        resource_type:    { type: string, nullable: true }
+        resource_id:      { type: string, format: uuid, nullable: true }
+        status:           { type: string, enum: [pending, running, completed, failed, cancelled, dead_letter] }
+        attempt_count:    { type: integer, minimum: 0 }
+        max_attempts:     { type: integer, minimum: 1 }
+        progress_pct:     { type: integer, minimum: 0, maximum: 100 }
+        result:           { type: object, nullable: true }
+        error_message:    { type: string, nullable: true }
+        created_at:       { type: string, format: date-time }
+        completed_at:     { type: string, format: date-time, nullable: true }
 
     Model:
       type: object
@@ -53,6 +103,21 @@ components:
         is_encrypted: { type: boolean }
         size_bytes:   { type: integer }
         created_at:   { type: string, format: date-time }
+
+    InferenceService:
+      type: object
+      required: [id, name, model, status, created_at]
+      properties:
+        id:                { type: string, format: uuid }
+        name:              { type: string }
+        model:             { type: string }
+        replicas:          { type: integer, default: 1 }
+        gpu_type:          { type: string, nullable: true }
+        gpu_count_per_pod: { type: integer, default: 1 }
+        max_concurrency:   { type: integer, default: 8 }
+        status:            { type: string, enum: [pending, deploying, running, stopping, stopped, failed] }
+        endpoint_url:      { type: string, nullable: true }
+        created_at:        { type: string, format: date-time }
 
     CreateModelRequest:
       type: object
@@ -96,6 +161,18 @@ components:
         doc_count: { type: integer }
         created_at: { type: string, format: date-time }
 
+    KBDocument:
+      type: object
+      required: [id, knowledge_base_id, file_name, status, created_at]
+      properties:
+        id:                { type: string, format: uuid }
+        knowledge_base_id: { type: string, format: uuid }
+        file_name:         { type: string }
+        content_type:      { type: string, nullable: true }
+        size_bytes:        { type: integer, minimum: 0 }
+        status:            { type: string, enum: [uploaded, parsing, indexed, failed, deleted] }
+        created_at:        { type: string, format: date-time }
+
     KBQueryRequest:
       type: object
       required: [question]
@@ -123,5 +200,354 @@ components:
         input_tokens:  { type: integer }
         output_tokens: { type: integer }
 
-# 路径定义在 SPEC-SPLIT-A 完成后从 v1.yaml 迁移到此处
-paths: {}
+paths:
+  /models:
+    get:
+      operationId: listModels
+      summary: 获取模型列表
+      tags: [Models]
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, downloading, ready, error, deleted] } }
+        - { name: limit, in: query, schema: { type: integer, default: 20, minimum: 1, maximum: 100 } }
+        - { name: cursor, in: query, schema: { type: string }, description: "上一页返回的 next_cursor" }
+      responses:
+        "200":
+          description: 模型列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/CursorPage'
+                  - properties:
+                      items: { type: array, items: { $ref: '#/components/schemas/Model' } }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+    post:
+      operationId: createModel
+      summary: 创建模型元数据记录
+      tags: [Models]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              required: [name, display_name]
+              properties:
+                name:
+                  type: string
+                  pattern: '^[a-z0-9][a-z0-9.-]{0,62}$'
+                display_name: { type: string, minLength: 1, maxLength: 128 }
+                description:  { type: string, maxLength: 1024 }
+                capabilities:
+                  type: array
+                  items: { type: string, enum: [text-generation, embedding, speech-to-text] }
+      responses:
+        "201":
+          description: 模型记录已创建
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Model' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "409": { $ref: '#/components/responses/Conflict' }
+
+  /models/import:
+    post:
+      operationId: importModel
+      summary: 从 HuggingFace 或 ModelScope 异步导入模型
+      tags: [Models]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              required: [source, repo_id, idempotency_key]
+              properties:
+                source: { type: string, enum: [huggingface, modelscope] }
+                repo_id: { type: string, minLength: 3, maxLength: 256 }
+                revision: { type: string, default: "main" }
+                idempotency_key: { type: string, maxLength: 128 }
+                webhook_url: { type: string, format: uri }
+      responses:
+        "202":
+          description: 导入任务已提交
+          headers:
+            Location:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AsyncTask' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+
+  /models/{model_id}:
+    get:
+      operationId: getModel
+      summary: 获取模型详情
+      tags: [Models]
+      parameters:
+        - { name: model_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: 模型详情
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Model' }
+        "404": { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteModel
+      summary: 删除模型
+      tags: [Models]
+      parameters:
+        - { name: model_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: 已删除 }
+        "404": { $ref: '#/components/responses/NotFound' }
+
+  /models/{model_id}/versions:
+    post:
+      operationId: createModelVersion
+      summary: 上传模型版本
+      tags: [Models]
+      parameters:
+        - { name: model_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              required: [version, format, storage_path, checksum_sha256, size_bytes]
+              properties:
+                version:         { type: string }
+                format:          { type: string, enum: [safetensors, gguf, pytorch] }
+                storage_path:    { type: string }
+                checksum_sha256: { type: string }
+                size_bytes:      { type: integer }
+                is_encrypted:    { type: boolean, default: false }
+      responses:
+        "201":
+          description: 模型版本已创建
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelVersion' }
+
+  /inference-services:
+    get:
+      operationId: listInferenceServices
+      summary: 获取推理服务列表
+      tags: [InferenceServices]
+      responses:
+        "200":
+          description: 推理服务列表
+          content:
+            application/json:
+              schema:
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/InferenceService' } }
+    post:
+      operationId: createInferenceService
+      summary: 部署推理服务
+      tags: [InferenceServices]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              required: [name, model]
+              properties:
+                name:              { type: string }
+                model:             { type: string }
+                replicas:          { type: integer, default: 1 }
+                gpu_type:          { type: string }
+                gpu_count_per_pod: { type: integer, default: 1 }
+                max_concurrency:   { type: integer, default: 8 }
+      responses:
+        "202":
+          description: 推理服务部署已提交
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InferenceService' }
+
+  /inference-services/{service_id}:
+    get:
+      operationId: getInferenceService
+      summary: 获取推理服务详情
+      tags: [InferenceServices]
+      parameters:
+        - { name: service_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: 推理服务详情
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InferenceService' }
+        "404": { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteInferenceService
+      summary: 停止并删除推理服务
+      tags: [InferenceServices]
+      parameters:
+        - { name: service_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "202": { description: 停止任务已提交 }
+        "404": { $ref: '#/components/responses/NotFound' }
+
+  /knowledge-bases:
+    get:
+      operationId: listKnowledgeBases
+      summary: 知识库列表
+      tags: [KnowledgeBases]
+      responses:
+        "200":
+          description: 知识库列表
+          content:
+            application/json:
+              schema:
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/KnowledgeBase' } }
+    post:
+      operationId: createKnowledgeBase
+      summary: 创建知识库
+      tags: [KnowledgeBases]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              required: [name]
+              properties:
+                name:            { type: string }
+                description:     { type: string }
+                embedding_model: { type: string, default: "bge-m3" }
+                chunk_size:      { type: integer, default: 512 }
+                top_k:           { type: integer, default: 5 }
+      responses:
+        "201":
+          description: 知识库已创建
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KnowledgeBase' }
+
+  /knowledge-bases/{kb_id}:
+    get:
+      operationId: getKnowledgeBase
+      summary: 获取知识库详情
+      tags: [KnowledgeBases]
+      parameters:
+        - { name: kb_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: 知识库详情
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KnowledgeBase' }
+        "404": { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteKnowledgeBase
+      summary: 删除知识库
+      tags: [KnowledgeBases]
+      parameters:
+        - { name: kb_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: 已删除 }
+        "404": { $ref: '#/components/responses/NotFound' }
+
+  /knowledge-bases/{kb_id}/documents:
+    get:
+      operationId: listKnowledgeBaseDocuments
+      summary: 文档列表
+      tags: [KnowledgeBases]
+      parameters:
+        - { name: kb_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: 文档列表
+          content:
+            application/json:
+              schema:
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/KBDocument' } }
+    post:
+      operationId: uploadKnowledgeBaseDocument
+      summary: 上传文档
+      tags: [KnowledgeBases]
+      parameters:
+        - { name: kb_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "202":
+          description: 文档已上传，解析任务进行中
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KBDocument' }
+
+  /knowledge-bases/{kb_id}/documents/{doc_id}:
+    delete:
+      operationId: deleteKnowledgeBaseDocument
+      summary: 删除知识库文档
+      tags: [KnowledgeBases]
+      parameters:
+        - { name: kb_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: doc_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: 已删除 }
+        "404": { $ref: '#/components/responses/NotFound' }
+
+  /knowledge-bases/{kb_id}/query:
+    post:
+      operationId: queryKnowledgeBase
+      summary: 知识库问答
+      tags: [KnowledgeBases]
+      parameters:
+        - { name: kb_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              required: [question, idempotency_key]
+              properties:
+                question: { type: string, minLength: 1, maxLength: 2000 }
+                session_id: { type: string, format: uuid, nullable: true }
+                idempotency_key: { type: string, maxLength: 128 }
+                top_k: { type: integer, default: 5, minimum: 1, maximum: 20 }
+                score_threshold: { type: number, format: float, default: 0.3, minimum: 0.0, maximum: 1.0 }
+      responses:
+        "200":
+          description: JSON 格式的问答结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KBQueryResponse' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NotFound' }
+
+  /knowledge-bases/{kb_id}/query/stream:
+    get:
+      operationId: streamQueryKnowledgeBase
+      summary: 知识库问答 SSE 流式
+      tags: [KnowledgeBases]
+      parameters:
+        - { name: kb_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: question, in: query, required: true, schema: { type: string, minLength: 1, maxLength: 2000 } }
+        - { name: session_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: SSE 流
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+
+tags:
+  - { name: Models, description: "模型仓库" }
+  - { name: InferenceServices, description: "推理服务" }
+  - { name: KnowledgeBases, description: "知识库服务" }

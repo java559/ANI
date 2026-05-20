@@ -88,8 +88,12 @@ ANI Core Phase 1 的交付对象分为两类：
 
 本约定优先级等同于安全边界和多租户边界。
 
-- 除 Kubernetes API 外，业务服务不得直接依赖 MinIO、Milvus、NATS JetStream、Redis、Harbor、CloudNativePG 等组件 SDK。
-- 业务代码必须依赖 ANI 自定义能力接口：`ObjectStore`、`VectorStore`、`MessageBus`、`CacheStore`、`MetadataStore`、`ImageRegistry`、`IdentityProvider`。
+- `pkg/ports/` 中的 port 指“产品能力抽象/接口边界”，不是 TCP/IP 端口。port 表达 ANI 需要什么能力，adapter 表达默认组件如何实现该能力。
+- 只要外部组件承载 ANI 产品能力、会被 Core service / Services / API handler 依赖，或存在合理替换/多实现可能，就必须经过 `pkg/ports/` 和 `pkg/adapters/`。
+- 业务服务不得直接依赖 MinIO、Milvus、NATS JetStream、Redis、Harbor、CloudNativePG 等组件 SDK。
+- 业务代码必须依赖 ANI 自定义能力接口：`ObjectStore`、`VectorStore`、`MessageBus`、`CacheStore`、`MetadataStore`、`ImageRegistry`、`IdentityProvider`、`WorkloadRuntime`、`NetworkProviderRenderer`。
+- Kubernetes API 属于 `bounded_direct`。允许在 Kubernetes/KubeVirt/KubeOVN adapter、controller/reconciler、preflight、真实集群 e2e profile 中原生使用 K8s API；禁止在 Gateway handler、Core domain service、ANI Services 业务服务中直接调用 K8s SDK 或拼装 provider 对象。
+- `ports` 不封装完整 Kubernetes SDK；K8s 版本升级、feature gate、server-side apply、watch/list/informer 和 CRD 差异必须在 adapter/controller 边界内处理。
 - 组件名只能出现在 adapter 包、bootstrap wiring、部署 profile、集成测试和开发记录中。
 - OpenAPI/Proto 不得新增 `minio_*`、`milvus_*`、`nats_*`、`redis_*`、`harbor_*` 等组件绑定字段。
 - Helm values 顶层应表达能力和 provider，不得把默认组件当作不可替换产品边界。
@@ -110,6 +114,7 @@ repo/pkg/adapters/    # 默认组件适配器实现
 - allowlist 必须标注 `coupling_level`：`port_required`、`adapter_with_extensions`、`bounded_direct` 或 `temporary_exception`。
 - `pkg/adapters/` 与 `pkg/bootstrap/` 是默认允许区；业务 service、worker、repo 层新增组件 SDK 导入默认禁止。
 - 若为了可用性、稳定性或核心性能选择 `bounded_direct`，必须限定模块边界，不得扩散到普通业务服务。
+- 开发者熟悉 Kubernetes 原生 API 不是绕过边界的理由；正确做法是在 bounded adapter/controller 内使用原生 API，在业务层保持 ANI 能力语义。
 
 详细规则见 `ANI-13-开源组件松耦合适配器架构.md`。
 

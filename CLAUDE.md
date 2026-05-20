@@ -9,8 +9,8 @@ This file provides mandatory guidance for Claude Code / Codex / Cursor / GPT cod
 ## 0. 当前状态
 
 ```text
-当前阶段：Phase 1 / Sprint 3
-当前优先级：M1-NETWORK-A → M1-STORAGE-A → SDK-ALPHA-A
+当前阶段：Phase 1 / Sprint 4
+当前优先级：SPEC-CORE-BETA → API Beta 准备（SPEC-SPLIT-A 已完成）
 当前不是 Phase 2：Phase 2 是 2026-10 以后延期能力
 下一步入口：repo/CURRENT-SPRINT.md
 文档导航：ANI-DOCS-INDEX.md
@@ -147,15 +147,37 @@ Core API v1 生命周期内：
 
 运行中的实例调用 ANI Core API 禁止使用长期静态 API Key。P0 使用生命周期绑定 scoped API Key；P1 再升级为短期 token / IRSA 风格。
 
+### Core Dev Profile 边界
+
+`CORE-DEV-PROFILE-A` 是 Sprint 3 的 Core dev/local profile 收口批次，历史讨论中曾叫 `MOCK-DEV-A`。该批次只属于 ANI Core 团队职责，不是 Services 团队的业务 mock。
+
+Core 团队负责：
+
+- Core API P0 路径在无真实 provider 时仍可本地联调。
+- dev/local profile 的状态机、错误码、幂等、operation timeline、权限语义与真实实现保持一致。
+- 所有本地成功必须能被测试识别为 dev/local profile，不能伪装成 real provider。
+- 清理 Services P0 依赖路径上无 owner/date 的 `NOT_IMPLEMENTED`、空 stub 和假成功。
+
+Core 团队不负责：
+
+- models、inference-services、knowledge-bases 等 ANI Services 业务 mock。
+- Services 页面演示假数据、业务流程假实现、PaaS 托管服务 mock。
+- 让 Services 直接绕过 Core API/SDK 拼装 Core 行为。
+
+Services 团队如需业务 mock，应在 ANI Services 层自行建设；Core 只提供稳定、可测试、契约兼容的 Core dev/local profile 和 SDK。
+
 ---
 
 ## 7. 组件边界强制规则
 
-1. 业务服务不得直接依赖 MinIO、Milvus、NATS JetStream、Redis、Harbor、CloudNativePG 等组件 SDK。
-2. 除 Kubernetes API 的 bounded runtime 模块外，组件访问必须经过 `pkg/ports/` 和 `pkg/adapters/`。
-3. VM、Container、GPU Container、Sandbox、Batch Job、Notebook、K8s Cluster、BM、DPU 都必须先经过 `WorkloadRuntime` 能力抽象。
-4. 异构 GPU 发现、分类和调度必须经过 `GPUInventory` 能力抽象。
-5. `make test` 会执行或应覆盖架构边界检查；新增直接组件 SDK 导入必须有显式 allowlist 和迁移批次理由。
+1. `pkg/ports/` 中的 port 指“产品能力抽象/接口边界”，不是 TCP/IP 端口；port 表达 ANI 需要什么能力，adapter 表达默认组件如何实现该能力。
+2. 只要某组件承载 ANI 产品能力、会被 Core service / Services / API handler 依赖，或存在合理替换/多实现可能，就必须经过 `pkg/ports/` 和 `pkg/adapters/`。
+3. 业务服务不得直接依赖 MinIO、Milvus、NATS JetStream、Redis、Harbor、CloudNativePG 等组件 SDK；这些组件属于 `port_required` 或 `adapter_with_extensions`。
+4. Kubernetes API 属于 `bounded_direct`：允许在 `pkg/adapters/runtime/kubernetes_*`、`pkg/adapters/runtime/kubeovn_*`、controller/reconciler、preflight 或明确登记的 bounded module 中原生使用 Kubernetes/client-go/controller-runtime/CRD API；禁止在 Gateway handler、Core domain service、ANI Services 业务服务中直接使用 K8s SDK 或拼装 provider 对象。
+5. `ports` 不封装完整 Kubernetes SDK；`ports` 只表达 ANI 产品意图，例如 `WorkloadRuntime`、`WorkloadProviderApply`、`NetworkProviderRenderer`。K8s 版本差异、feature gate、server-side apply、watch/list 等原生最佳实践必须留在 adapter/controller 边界内处理。
+6. VM、Container、GPU Container、Sandbox、Batch Job、Notebook、K8s Cluster、BM、DPU 都必须先经过 `WorkloadRuntime` 能力抽象。
+7. 异构 GPU 发现、分类和调度必须经过 `GPUInventory` 能力抽象。
+8. `make test` 会执行或应覆盖架构边界检查；新增直接组件 SDK 导入必须有显式 allowlist、`coupling_level` 和迁移/保留理由。
 
 ---
 

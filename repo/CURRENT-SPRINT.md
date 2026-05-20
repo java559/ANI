@@ -10,159 +10,98 @@
 
 | 字段 | 值 |
 |---|---|
-| **冲刺编号** | Sprint 3 |
-| **时间范围** | 2026-05-20 提前启动；计划窗口 2026-06-16 → 2026-06-30 |
-| **主题** | Core API 面扩充（网络 + 存储 + 向量 + Workload Identity）+ SDK Alpha |
-| **核心批次** | M1-NETWORK-A + M1-STORAGE-A + M1-VSTORE-A + M1-WKID-A + SDK-ALPHA-A + MOCK-DEV-A |
-| **前置验证** | Sprint 2 已完成：Core API Alpha Freeze、VM 生产级操作、Container/GPU 深度本地 profile |
+| **冲刺编号** | Sprint 4 |
+| **时间范围** | 2026-05-20 提前启动；计划窗口 2026-07-01 → 2026-07-15 |
+| **主题** | API Beta 准备 + 四语言 SDK 加固 + Mock Server |
+| **核心批次** | SPEC-SPLIT-A + SPEC-CORE-BETA + SDK-GO/PY/TS/JAVA + MOCK-A + DOC-API-A |
+| **前置验证** | Sprint 3 已完成：网络/存储/向量/Workload Identity/SDK Alpha/Core Dev Profile Ready |
 
 ---
 
 ## 本冲刺目标
 
-Sprint 3 的目标是在 Core API Alpha 已冻结的基础上，继续扩充 Services P0 所需的基础设施 API 面，并让 SDK/dev profile 进入可联调状态。
+Sprint 4 的目标是在 Core Dev Profile Ready 之后，进入 API Beta 准备和 SDK/Mock Server 加固。
 
-1. 补齐网络资源 API：VPC、子网、安全组、LB 的 Core 契约与 dev/local profile。
-2. 补齐存储资源 API：volumes、filesystems、objects 的 Core 契约与 dev/local profile。
-3. 补齐 vector-stores Core API，并复用既有 Milvus adapter 边界。
-4. 建立 Workload Identity P0：实例生命周期绑定 scoped API key。
-5. 输出 Go/Python/TypeScript/Java SDK Alpha，并完成生成/import/compile smoke test。
-6. 保持 Sprint 2 冻结的 `/api/v1/instances` 不发生 breaking change。
+1. 完成 Core/Services API 分层收口，Core API 不承载 Services 业务路径。
+2. 审查 Sprint 1-3 所有 Core P0 路径的 schema、分页、幂等、错误码、状态机和 RBAC scope。
+3. 加固 Go/Python/TypeScript/Java SDK，确保 Services 团队可稳定使用。
+4. 准备 Mock Server 和 API 文档生成，支持 Services 团队并行开发。
 
 ---
 
-## P0：M1-NETWORK-A
+## P0：SPEC-SPLIT-A
 
-**状态：🔄 当前优先**
+**状态：✅ 已完成，下一步进入 SPEC-CORE-BETA**
 
-**主题：网络资源 Core API 面**
+**主题：Core/Services API 分层收口**
 
 ### 最小实现切片
 
-1. 在 `api/openapi/v1.yaml` 增加 VPC、Subnet、SecurityGroup、LB 的 Alpha path/schema/RBAC scope。
-2. Gateway 注册主路径，先提供 dev/local profile 或 contract-compatible mock。
-3. 网络资源状态必须包含 owner tenant、state、reason、created_at、updated_at。
-4. 新增合同守卫，防止网络 path/schema/RBAC scope 漂移。
+1. `/models`、`/inference-services`、`/knowledge-bases` 只维护在 `api/openapi/services/v1.yaml`。
+2. Core API `api/openapi/v1.yaml` 不再包含 Services 业务路径或 Services tags。
+3. Gateway 将 Services 过渡 stub 挂到 `/api/v1/svc/*`，不再挂到 Core `/api/v1/*`。
+4. SDK Alpha 生成不再依赖 Core 侧排除列表；Core/Services SDK metadata 按各自 API 契约自然生成。
+5. 新增合同守卫，避免 Services 业务路径重新混回 Core API、Core SDK 或 Core Gateway group。
 
-### 验收方向
+### 验收命令
 
 ```bash
+make gen-core-sdk
+make validate-spec-split
+make validate-sdk-alpha
+python scripts/validate_yaml.py api/openapi/v1.yaml api/openapi/services/v1.yaml
 make test
 make validate-architecture
 git diff --check
-# 定向测试应覆盖：
-# - POST /api/v1/networks/vpcs → 201 Created
-# - GET /api/v1/networks/vpcs → 返回租户隔离列表
-# - 网络 API 不出现在 Services API 契约中
 ```
 
----
+### 本批次完成内容
 
-## P0：M1-STORAGE-A
-
-**状态：⏳ 待开始**
-
-**主题：存储资源 Core API 面**
-
-### 最小实现切片
-
-1. 增加 volumes、filesystems、objects 的 Core API Alpha 契约。
-2. dev/local profile 返回与真实状态机兼容的 `pending/available/failed/deleting/deleted` 状态。
-3. 与 instances 的 volume binding 字段保持兼容，不引入双写语义冲突。
-
-### 验收方向
-
-```bash
-make test
-# 定向测试应覆盖：
-# - POST /api/v1/volumes → 201 Created
-# - GET /api/v1/volumes/{id} → 返回容量、类型、状态、租户
-```
+1. Core API 移除 `/models`、`/inference-services`、`/knowledge-bases` 业务路径和过渡 tags。
+2. Services API 使用 `https://{host}/api/v1/svc` 作为 base path，并承载 models、inference-services、knowledge-bases path/schema。
+3. Gateway Services 过渡 stub 改挂 `/api/v1/svc/*`，RBAC resource 推导跳过 `svc` 前缀。
+4. SDK Alpha 生成和校验不再依赖 Core SDK 排除列表；Core/Services SDK metadata 按各自契约自然分层。
+5. 新增 `make validate-spec-split` 合同守卫。
 
 ---
 
-## P0：M1-VSTORE-A
+## P0：SPEC-CORE-BETA
 
 **状态：⏳ 待开始**
 
-**主题：vector-stores Core API**
+**主题：Core API Beta 准备**
 
 ### 最小实现切片
 
-1. 将 vector-stores 作为 Core 基础设施资源维护在 `api/openapi/v1.yaml`。
-2. Gateway dev/local profile 支持 create/list/get/delete。
-3. 访问 Milvus 必须经 `pkg/ports` / `pkg/adapters`，不允许 Services 直接 import Milvus SDK。
-
----
-
-## P0：M1-WKID-A
-
-**状态：⏳ 待开始**
-
-**主题：Workload Identity P0**
-
-### 最小实现切片
-
-1. 实例创建时生成 lifecycle-bound scoped API key。
-2. 实例删除时 revoke 对应 key。
-3. Workload Identity 不使用长期静态 API Key。
-4. operation timeline 记录 identity 绑定与撤销。
-
----
-
-## P0：SDK-ALPHA-A
-
-**状态：⏳ 待开始**
-
-**主题：四语言 SDK Alpha**
-
-### 最小实现切片
-
-1. 从 `api/openapi/v1.yaml` 生成 Go/Python/TypeScript/Java Core SDK。
-2. 从 `api/openapi/services/v1.yaml` 生成 Services SDK，不混入 Core 类型。
-3. 每个 SDK 至少有 import/compile smoke test。
-
----
-
-## P0：MOCK-DEV-A
-
-**状态：⏳ 待开始**
-
-**主题：Core dev profile / mock profile**
-
-### 最小实现切片
-
-1. dev/local profile 的状态机和错误语义与真实实现一致。
-2. 不保留无 owner/date 的 `NOT_IMPLEMENTED` stub 于 Services P0 依赖路径。
-3. mock success 必须能被合同测试识别，不能伪装成 real provider。
+1. 审查 Sprint 1-3 所有 Core P0 path/schema，补齐分页、幂等、错误码、状态机和 RBAC scope。
+2. 输出机器可读 Beta 检查矩阵，明确 allowed additive changes 和 forbidden breaking changes。
+3. 确保 Services P0 依赖路径没有无 owner/date 的 stub、mock success 或 `NOT_IMPLEMENTED`。
 
 ---
 
 ## 本冲刺不做
 
 - 不进入 Phase 2 延期项。
-- 不把 Services 业务逻辑写进 Core。
-- 不绕过 `pkg/ports/` 直接调用 K8s/KubeVirt/MinIO/Milvus SDK。
-- 不破坏 Sprint 2 已冻结的 Core API Alpha instance 契约。
+- 不把 Services 业务实现写进 Core。
+- 不在 Core API 里重新引入 models、inference-services、knowledge-bases 等 Services 业务路径。
 - 不在没有 API 契约和测试的情况下直接生成实现代码。
 
 ---
 
 ## 代码结构 10 分钟导航
 
-```
+```text
 必读（按顺序）：
   1. CLAUDE.md
   2. ANI-DOCS-INDEX.md
-  3. ANI-06-开发计划.md 的 Section 零和 Sprint 3
+  3. ANI-06-开发计划.md 的 Section 零和 Sprint 4
   4. api/openapi/v1.yaml
-  5. api/core-alpha-freeze.yaml
-  6. pkg/ports/
-  7. pkg/adapters/
+  5. api/openapi/services/v1.yaml
+  6. scripts/validate_spec_split_contract.py
 
 查历史：
   - repo/development-records/README.md
-  - repo/development-records/spec-core-alpha-b-freeze-matrix.md
+  - repo/development-records/sprint3-closure-a-contract.md
 ```
 
 ---
@@ -172,10 +111,9 @@ make test
 ```bash
 cd /path/to/ANI/repo
 
-make build
 make test
 make validate-architecture
-make validate-core-alpha
+make validate-spec-split
 ```
 
 ---
@@ -185,17 +123,18 @@ make validate-core-alpha
 每完成一个批次或可独立验收切片，按顺序执行：
 
 ```text
-1. make test
-2. make validate-architecture
-3. git diff --check
-4. 新建或更新 repo/development-records/{批次名}.md
-5. 更新 repo/development-records/README.md
-6. 更新本文件对应批次状态
-7. 更新 ANI-06-开发计划.md Section 零对应批次状态
+1. 当前批次验收命令
+2. make test
+3. make validate-architecture
+4. git diff --check
+5. 新建或更新 repo/development-records/{批次名}.md
+6. 更新 repo/development-records/README.md
+7. 更新本文件对应批次状态
+8. 更新 ANI-06-开发计划.md Section 零对应批次状态
 ```
 
-完整规约说明：`CLAUDE.md` → "📋 开发进度更新规约"。
+完整规约说明：`CLAUDE.md`。
 
 ---
 
-*Sprint 3 负责人：[填入]　最后更新：2026-05-20*
+*Sprint 4 负责人：[填入]　最后更新：2026-05-20*

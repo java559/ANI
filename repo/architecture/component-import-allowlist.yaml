@@ -7,6 +7,10 @@
 #   adapter_with_extensions  - basic capability uses a port; advanced capability
 #                              may use provider-specific extension interfaces.
 #   bounded_direct           - strategic direct binding in a bounded module.
+#                              Common cases: Kubernetes adapter/controller,
+#                              preflight/e2e, or PostgreSQL/RLS persistence.
+#                              It must not leak into gateway handlers, Core
+#                              domain services, or ANI Services business code.
 #   temporary_exception      - short-lived migration exception with migrate_by.
 allowed:
   - path: pkg/repo/outbox_repo.go

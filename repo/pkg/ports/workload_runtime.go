@@ -213,6 +213,7 @@ type WorkloadSpec struct {
 	RuntimeClassName   string
 	SchedulerName      string
 	ServiceAccountName string
+	Identity           *WorkloadIdentityBinding
 	TTL                time.Duration
 }
 
@@ -358,6 +359,7 @@ type WorkloadInstanceCreateResult struct {
 	Reconcile        WorkloadReconcileResult
 	FinalStatus      WorkloadStatus
 	Orchestrated     bool
+	Identity         *WorkloadIdentityBinding
 }
 
 type WorkloadInstanceGetRequest struct {
@@ -459,10 +461,43 @@ type WorkloadInstanceRecord struct {
 	Snapshots    []VMInstanceSnapshot
 	Container    *ContainerInstanceStatus
 	GPU          *GPUInstanceStatus
+	Identity     *WorkloadIdentityBinding
 	ResourceRefs []string
 	Status       WorkloadStatus
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+}
+
+type WorkloadIdentityBinding struct {
+	TenantID   string
+	InstanceID string
+	KeyID      string
+	KeyPrefix  string
+	// KeyValue is returned only at bind time so the runtime adapter can inject it
+	// into the workload. Stores and query paths must not return it later.
+	KeyValue  string
+	Scopes    []string
+	Active    bool
+	CreatedAt time.Time
+	ExpiresAt time.Time
+	RevokedAt time.Time
+}
+
+type WorkloadIdentityBindRequest struct {
+	TenantID     string
+	InstanceID   string
+	InstanceName string
+	Kind         WorkloadKind
+	UserID       string
+	Scopes       []string
+	TTL          time.Duration
+	RequestedAt  time.Time
+}
+
+type WorkloadIdentityRevokeRequest struct {
+	TenantID    string
+	InstanceID  string
+	RequestedAt time.Time
 }
 
 type WorkloadOperationStep struct {
@@ -633,6 +668,16 @@ type WorkloadInstanceLifecycleExecutor interface {
 // remain inside the ops adapter.
 type WorkloadInstanceOps interface {
 	Run(ctx context.Context, request WorkloadInstanceOpsRequest, record WorkloadInstanceRecord) (WorkloadInstanceOpsResult, error)
+}
+
+// WorkloadIdentityService owns lifecycle-bound scoped API keys for workloads.
+// Running instances must use these short-scope bindings instead of long-lived
+// user API keys. Implementations may persist into api_keys or a provider-native
+// identity system, but callers only depend on this ANI capability boundary.
+type WorkloadIdentityService interface {
+	BindScopedKey(ctx context.Context, request WorkloadIdentityBindRequest) (WorkloadIdentityBinding, error)
+	GetForInstance(ctx context.Context, tenantID string, instanceID string) (WorkloadIdentityBinding, error)
+	RevokeForInstance(ctx context.Context, request WorkloadIdentityRevokeRequest) (WorkloadIdentityBinding, error)
 }
 
 // WorkloadOperationStore persists instance operation records and their

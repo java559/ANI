@@ -25,26 +25,42 @@ import (
 // Capabilities exposes ANI-defined ports for loosely-coupled component access.
 // Existing raw clients stay available during the ARCH-ADAPTER migration window.
 type Capabilities struct {
-	Metadata           ports.MetadataStore
-	MessageBus         ports.MessageBus
-	Cache              ports.CacheStore
-	ObjectStore        ports.ObjectStore
-	VectorStore        ports.VectorStore
-	ImageRegistry      ports.ImageRegistry
-	GPUInventory       ports.GPUInventory
-	WorkloadRuntime    ports.WorkloadRuntime
-	WorkloadRenderer   ports.WorkloadRenderer
-	WorkloadAdmission  ports.WorkloadAdmission
-	WorkloadPlanAudit  ports.WorkloadPlanAuditStore
-	WorkloadDryRun     ports.WorkloadProviderDryRun
-	WorkloadApply      ports.WorkloadProviderApply
-	WorkloadReconcile  ports.WorkloadStatusReconciler
-	WorkloadStatus     ports.WorkloadProviderStatusReader
-	WorkloadInstances  ports.WorkloadInstanceOrchestrator
-	WorkloadStore      ports.WorkloadInstanceStore
-	WorkloadOperations ports.WorkloadOperationStore
-	InstanceService    ports.WorkloadInstanceService
-	InstanceOps        ports.WorkloadInstanceOps
+	Metadata             ports.MetadataStore
+	MessageBus           ports.MessageBus
+	Cache                ports.CacheStore
+	ObjectStore          ports.ObjectStore
+	VectorStore          ports.VectorStore
+	VectorStoreResources ports.VectorStoreService
+	ImageRegistry        ports.ImageRegistry
+	GPUInventory         ports.GPUInventory
+	WorkloadRuntime      ports.WorkloadRuntime
+	WorkloadRenderer     ports.WorkloadRenderer
+	WorkloadAdmission    ports.WorkloadAdmission
+	WorkloadPlanAudit    ports.WorkloadPlanAuditStore
+	WorkloadDryRun       ports.WorkloadProviderDryRun
+	WorkloadApply        ports.WorkloadProviderApply
+	WorkloadReconcile    ports.WorkloadStatusReconciler
+	WorkloadStatus       ports.WorkloadProviderStatusReader
+	WorkloadInstances    ports.WorkloadInstanceOrchestrator
+	WorkloadStore        ports.WorkloadInstanceStore
+	WorkloadOperations   ports.WorkloadOperationStore
+	WorkloadIdentity     ports.WorkloadIdentityService
+	InstanceService      ports.WorkloadInstanceService
+	InstanceOps          ports.WorkloadInstanceOps
+	NetworkStore         ports.NetworkResourceStore
+	NetworkRenderer      ports.NetworkProviderRenderer
+	NetworkDryRun        ports.NetworkProviderDryRun
+	NetworkApply         ports.NetworkProviderApply
+	NetworkStatus        ports.NetworkProviderStatusReader
+	NetworkReconcile     ports.NetworkStatusReconciler
+	NetworkResources     ports.NetworkService
+	StorageStore         ports.StorageResourceStore
+	StorageRenderer      ports.StorageProviderRenderer
+	StorageDryRun        ports.StorageProviderDryRun
+	StorageApply         ports.StorageProviderApply
+	StorageStatus        ports.StorageProviderStatusReader
+	StorageReconcile     ports.StorageStatusReconciler
+	StorageResources     ports.StorageService
 }
 
 // Deps holds all initialized external dependencies.
@@ -90,6 +106,12 @@ func NewCapabilitiesWithConfig(db *pgxpool.Pool, js nats.JetStreamContext, redis
 	reconciler := runtimeadapter.NewLocalStatusReconciler()
 	instanceStore := runtimeadapter.NewMetadataInstanceStore(metadata)
 	operationStore := runtimeadapter.NewMetadataOperationStore(metadata)
+	workloadIdentity := runtimeadapter.NewMetadataWorkloadIdentityService(metadata)
+	networkStore := runtimeadapter.NewMetadataNetworkStore(metadata)
+	networkRenderer := runtimeadapter.NewKubeOVNNetworkRenderer()
+	networkProvider := runtimeadapter.NewKubeOVNNetworkProviderAdapter(kubeClient)
+	storageStore := runtimeadapter.NewMetadataStorageStore(metadata)
+	storageProvider := runtimeadapter.NewKubernetesStorageProviderAdapter(kubeClient)
 	orchestrator := runtimeadapter.NewLocalInstanceOrchestrator(
 		planner,
 		runtimeadapter.NewKubernetesDryRunRenderer(planner),
@@ -100,34 +122,52 @@ func NewCapabilitiesWithConfig(db *pgxpool.Pool, js nats.JetStreamContext, redis
 		statusReader,
 		reconciler,
 		runtimeadapter.WithInstanceStore(instanceStore),
+		runtimeadapter.WithInstanceOrchestratorWorkloadIdentityService(workloadIdentity),
 	)
 	return Capabilities{
-		Metadata:           metadata,
-		MessageBus:         natsadapter.NewMessageBus(js),
-		Cache:              redisadapter.NewCacheStore(redisClient),
-		ObjectStore:        objectstore.NotConfigured{},
-		VectorStore:        vectorstore.NotConfigured{},
-		ImageRegistry:      registry.NotConfigured{},
-		GPUInventory:       gpuInventory,
-		WorkloadRuntime:    planner,
-		WorkloadRenderer:   runtimeadapter.NewKubernetesDryRunRenderer(planner),
-		WorkloadAdmission:  admission,
-		WorkloadPlanAudit:  audit,
-		WorkloadDryRun:     dryRun,
-		WorkloadApply:      apply,
-		WorkloadReconcile:  reconciler,
-		WorkloadStatus:     statusReader,
-		WorkloadStore:      instanceStore,
-		WorkloadOperations: operationStore,
-		WorkloadInstances:  orchestrator,
+		Metadata:             metadata,
+		MessageBus:           natsadapter.NewMessageBus(js),
+		Cache:                redisadapter.NewCacheStore(redisClient),
+		ObjectStore:          objectstore.NotConfigured{},
+		VectorStore:          vectorstore.NotConfigured{},
+		VectorStoreResources: runtimeadapter.NewLocalVectorStoreService(),
+		ImageRegistry:        registry.NotConfigured{},
+		GPUInventory:         gpuInventory,
+		WorkloadRuntime:      planner,
+		WorkloadRenderer:     runtimeadapter.NewKubernetesDryRunRenderer(planner),
+		WorkloadAdmission:    admission,
+		WorkloadPlanAudit:    audit,
+		WorkloadDryRun:       dryRun,
+		WorkloadApply:        apply,
+		WorkloadReconcile:    reconciler,
+		WorkloadStatus:       statusReader,
+		WorkloadStore:        instanceStore,
+		WorkloadOperations:   operationStore,
+		WorkloadIdentity:     workloadIdentity,
+		WorkloadInstances:    orchestrator,
 		InstanceService: runtimeadapter.NewLocalInstanceServiceWithOptions(
 			orchestrator,
 			instanceStore,
 			instanceOps,
 			runtimeadapter.WithOperationStore(operationStore),
 			runtimeadapter.WithInstanceLifecycleExecutor(lifecycle),
+			runtimeadapter.WithWorkloadIdentityService(workloadIdentity),
 		),
-		InstanceOps: instanceOps,
+		InstanceOps:      instanceOps,
+		NetworkStore:     networkStore,
+		NetworkRenderer:  networkRenderer,
+		NetworkDryRun:    networkProvider,
+		NetworkApply:     networkProvider,
+		NetworkStatus:    networkProvider,
+		NetworkReconcile: runtimeadapter.NewLocalNetworkStatusReconciler(networkStore),
+		NetworkResources: runtimeadapter.NewLocalNetworkService(runtimeadapter.WithNetworkResourceStore(networkStore)),
+		StorageStore:     storageStore,
+		StorageRenderer:  runtimeadapter.NewKubernetesStorageRenderer(),
+		StorageDryRun:    storageProvider,
+		StorageApply:     storageProvider,
+		StorageStatus:    storageProvider,
+		StorageReconcile: runtimeadapter.NewLocalStorageStatusReconciler(storageStore),
+		StorageResources: runtimeadapter.NewLocalStorageService(runtimeadapter.WithStorageResourceStore(storageStore)),
 	}, nil
 }
 

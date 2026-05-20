@@ -62,6 +62,35 @@ func TestKubernetesDryRunRendererRendersGPUDeployment(t *testing.T) {
 	}
 }
 
+func TestKubernetesDryRunRendererInjectsWorkloadIdentityEnvFromSecret(t *testing.T) {
+	renderer := NewKubernetesDryRunRenderer(NewPlanningRuntime())
+
+	manifests, err := renderer.Render(context.Background(), ports.WorkloadSpec{
+		TenantID: "tenant-a",
+		Name:     "app-01",
+		Kind:     ports.WorkloadKindContainer,
+		Image:    "harbor/app:1",
+		Identity: &ports.WorkloadIdentityBinding{
+			InstanceID: "instance-a",
+			KeyID:      "key-1234567890",
+			KeyValue:   "must-not-render",
+			Active:     true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	content := manifests[0].Content
+	for _, want := range []string{"ANI_WORKLOAD_TOKEN", "secretKeyRef", "ani-wi-key-1234567890", "ANI_WORKLOAD_ID", "instance-a"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("rendered identity manifest missing %q:\n%s", want, content)
+		}
+	}
+	if strings.Contains(content, "must-not-render") {
+		t.Fatalf("rendered manifest leaked workload identity key value:\n%s", content)
+	}
+}
+
 func TestKubernetesDryRunRendererRendersBatchJob(t *testing.T) {
 	renderer := NewKubernetesDryRunRenderer(NewPlanningRuntime())
 

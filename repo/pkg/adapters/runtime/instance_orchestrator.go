@@ -19,6 +19,7 @@ type LocalInstanceOrchestrator struct {
 	reader     ports.WorkloadProviderStatusReader
 	reconciler ports.WorkloadStatusReconciler
 	store      ports.WorkloadInstanceStore
+	identity   ports.WorkloadIdentityService
 	now        func() time.Time
 }
 
@@ -35,6 +36,12 @@ func WithInstanceOrchestratorClock(now func() time.Time) InstanceOrchestratorOpt
 func WithInstanceStore(store ports.WorkloadInstanceStore) InstanceOrchestratorOption {
 	return func(orchestrator *LocalInstanceOrchestrator) {
 		orchestrator.store = store
+	}
+}
+
+func WithInstanceOrchestratorWorkloadIdentityService(identity ports.WorkloadIdentityService) InstanceOrchestratorOption {
+	return func(orchestrator *LocalInstanceOrchestrator) {
+		orchestrator.identity = identity
 	}
 }
 
@@ -84,6 +91,22 @@ func (o *LocalInstanceOrchestrator) Create(ctx context.Context, request ports.Wo
 	current, err := o.runtime.Get(ctx, ref)
 	if err != nil {
 		return ports.WorkloadInstanceCreateResult{}, err
+	}
+	var identity *ports.WorkloadIdentityBinding
+	if o.identity != nil {
+		binding, err := o.identity.BindScopedKey(ctx, ports.WorkloadIdentityBindRequest{
+			TenantID:     ref.TenantID,
+			InstanceID:   ref.InstanceID,
+			InstanceName: request.Spec.Name,
+			Kind:         ref.Kind,
+			UserID:       request.UserID,
+			RequestedAt:  firstNonZeroTime(request.RequestedAt, o.now().UTC()),
+		})
+		if err != nil {
+			return ports.WorkloadInstanceCreateResult{}, err
+		}
+		identity = &binding
+		request.Spec.Identity = identity
 	}
 	manifests, err := o.renderer.Render(ctx, request.Spec)
 	if err != nil {
@@ -139,6 +162,7 @@ func (o *LocalInstanceOrchestrator) Create(ctx context.Context, request ports.Wo
 		DryRun:      dryRun,
 		Apply:       apply,
 		FinalStatus: current,
+		Identity:    identity,
 	}
 	if o.store != nil {
 		if err := o.store.UpsertStatus(ctx, instanceRecordFromResult(request.Spec, ref, auditID, provider, nil, current, firstNonZeroTime(request.RequestedAt, o.now().UTC()))); err != nil {
@@ -224,11 +248,22 @@ func instanceRecordFromResult(spec ports.WorkloadSpec, ref ports.WorkloadRef, au
 		SSH:          sshConnectionInfo(spec, ref, status),
 		Container:    containerStatusInfo(spec, status, createdAt),
 		GPU:          gpuStatusInfo(spec, status),
+		Identity:     workloadIdentitySummary(spec.Identity),
 		ResourceRefs: append([]string(nil), resourceRefs...),
 		Status:       status,
 		CreatedAt:    createdAt,
 		UpdatedAt:    firstNonZeroTime(status.UpdatedAt, createdAt),
 	}
+}
+
+func workloadIdentitySummary(identity *ports.WorkloadIdentityBinding) *ports.WorkloadIdentityBinding {
+	if identity == nil {
+		return nil
+	}
+	summary := *identity
+	summary.KeyValue = ""
+	summary.Scopes = append([]string(nil), identity.Scopes...)
+	return &summary
 }
 
 func sshConnectionInfo(spec ports.WorkloadSpec, ref ports.WorkloadRef, status ports.WorkloadStatus) *ports.VMSSHConnectionInfo {

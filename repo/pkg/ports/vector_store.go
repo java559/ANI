@@ -1,6 +1,57 @@
 package ports
 
-import "context"
+import (
+	"context"
+	"time"
+)
+
+type VectorStoreState string
+
+const (
+	VectorStorePending  VectorStoreState = "pending"
+	VectorStoreReady    VectorStoreState = "ready"
+	VectorStoreFailed   VectorStoreState = "failed"
+	VectorStoreDeleting VectorStoreState = "deleting"
+	VectorStoreDeleted  VectorStoreState = "deleted"
+)
+
+type VectorStoreRecord struct {
+	TenantID  string
+	StoreID   string
+	Name      string
+	Dimension int
+	Metric    string
+	State     VectorStoreState
+	Reason    string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type VectorStoreCreateRequest struct {
+	TenantID  string
+	Name      string
+	Dimension int
+	Metric    string
+}
+
+type VectorStoreResourceGetRequest struct {
+	TenantID   string
+	ResourceID string
+}
+
+type VectorStoreResourceListRequest struct {
+	TenantID string
+	Limit    int
+	Cursor   string
+}
+
+type VectorStoreResourceSearchRequest struct {
+	TenantID   string
+	ResourceID string
+	Vector     []float32
+	TopK       int
+	Filter     map[string]string
+}
 
 type VectorCollectionRef struct {
 	TenantID string
@@ -37,4 +88,12 @@ type VectorStore interface {
 	Search(ctx context.Context, query VectorSearchQuery) ([]VectorSearchResult, error)
 	Delete(ctx context.Context, ref VectorCollectionRef, ids []string) error
 	Health(ctx context.Context, ref VectorCollectionRef) (VectorCollectionHealth, error)
+}
+
+type VectorStoreService interface {
+	CreateVectorStore(ctx context.Context, request VectorStoreCreateRequest) (VectorStoreRecord, error)
+	ListVectorStores(ctx context.Context, request VectorStoreResourceListRequest) ([]VectorStoreRecord, error)
+	GetVectorStore(ctx context.Context, request VectorStoreResourceGetRequest) (VectorStoreRecord, error)
+	DeleteVectorStore(ctx context.Context, request VectorStoreResourceGetRequest) (VectorStoreRecord, error)
+	SearchVectorStore(ctx context.Context, request VectorStoreResourceSearchRequest) ([]VectorSearchResult, error)
 }

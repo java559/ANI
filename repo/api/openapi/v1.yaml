@@ -37,10 +37,6 @@ info:
     202 响应体返回 AsyncTask，Location Header 附任务 URL。
     轮询 GET /api/v1/tasks/{task_id} 或配置 Webhook。
 
-    ## ⚠️ V8 迁移注解
-    /models、/inference-services、/knowledge-bases 为历史遗留路径，逻辑属 ANI Services，
-    将在 SPEC-SPLIT-A 批次迁移至 api/openapi/services/v1.yaml，迁移前暂时保留。
-
 servers:
   - url: https://{host}/api/v1
     variables:
@@ -108,8 +104,7 @@ components:
 
     # Demo/Services schemas 已迁移：
     # - DemoInstance/DemoCreateInstanceRequest → api/openapi/dev.yaml
-    # - Model/InferenceService/KnowledgeBase → api/openapi/services/v1.yaml
-    # （SPEC-SPLIT-A 过渡期，路径仍在本文件，schemas 已移走）
+    # - Model/InferenceService/KnowledgeBase path/schema → api/openapi/services/v1.yaml
 
     # ── ANI Core 基础设施 Schemas ─────────────────────────────────────────────
 
@@ -128,6 +123,16 @@ components:
               latency_ms: { type: integer }
               error:      { type: string, nullable: true }
 
+    CoreDevProfileInfo:
+      type: object
+      description: "Core dev/local profile 标记；用于区分本地联调成功与真实 provider 执行成功。"
+      required: [mode, provider, real_provider]
+      properties:
+        mode:          { type: string, enum: [local, real] }
+        provider:      { type: string }
+        real_provider: { type: boolean }
+        reason:        { type: string, nullable: true }
+
     InstanceRecord:
       type: object
       description: ANI Core 计算实例（VM/Container/GPU/Sandbox/BM/K8s集群/Batch）
@@ -141,6 +146,8 @@ components:
         state_reason:   { type: string, nullable: true, description: "机器可读的状态原因码，如 InsufficientGPU" }
         state_message:  { type: string, nullable: true, description: "人类可读的状态描述" }
         provider:       { type: string, example: "kubernetes_rest" }
+        dev_profile:
+          $ref: '#/components/schemas/CoreDevProfileInfo'
         audit_id:       { type: string, nullable: true }
         resource_refs:  { type: array, items: { type: string } }
         endpoint:       { type: string, nullable: true }
@@ -198,6 +205,8 @@ components:
             count:                 { type: integer, minimum: 0 }
             scheduling_reason:     { type: string, nullable: true }
             utilization_percent:   { type: number, format: float, minimum: 0, maximum: 100, nullable: true }
+        workload_identity:
+          $ref: '#/components/schemas/WorkloadIdentityBinding'
         snapshots:
           type: array
           description: "VM 快照元数据；provider-native 快照执行后续通过 reconcile 对齐"
@@ -214,6 +223,20 @@ components:
               ready_at:           { type: string, format: date-time, nullable: true }
         created_at:     { type: string, format: date-time }
         updated_at:     { type: string, format: date-time }
+
+    WorkloadIdentityBinding:
+      type: object
+      description: "实例生命周期绑定的 scoped API key 摘要；不返回 key 明文。"
+      required: [active]
+      properties:
+        key_id:     { type: string, nullable: true }
+        key_prefix: { type: string, nullable: true, description: "仅用于展示和排查，不可用于认证" }
+        scopes:
+          type: array
+          items: { type: string, pattern: "^scope:[a-z0-9_-]+:(\\*|[a-z0-9_-]+)$" }
+        active:     { type: boolean }
+        created_at: { type: string, format: date-time, nullable: true }
+        revoked_at: { type: string, format: date-time, nullable: true }
 
     InstanceOperation:
       type: object
@@ -329,6 +352,330 @@ components:
         connect_url: { type: string }
         url:         { type: string, description: "连接 URL，和 connect_url 等价，供 Console/SDK 直接使用" }
         expires_at:  { type: string, format: date-time }
+
+    NetworkResourceState:
+      type: string
+      enum: [pending, available, failed, deleting, deleted]
+
+    NetworkVPC:
+      type: object
+      required: [id, tenant_id, name, cidr, state, created_at, updated_at]
+      properties:
+        id:         { type: string }
+        tenant_id:  { type: string }
+        name:       { type: string }
+        cidr:       { type: string, example: "10.20.0.0/16" }
+        state:      { $ref: '#/components/schemas/NetworkResourceState' }
+        reason:     { type: string, nullable: true }
+        dev_profile:
+          $ref: '#/components/schemas/CoreDevProfileInfo'
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    NetworkSubnet:
+      type: object
+      required: [id, tenant_id, vpc_id, name, cidr, state, created_at, updated_at]
+      properties:
+        id:         { type: string }
+        tenant_id:  { type: string }
+        vpc_id:     { type: string }
+        name:       { type: string }
+        cidr:       { type: string, example: "10.20.1.0/24" }
+        gateway:    { type: string, nullable: true }
+        state:      { $ref: '#/components/schemas/NetworkResourceState' }
+        reason:     { type: string, nullable: true }
+        dev_profile:
+          $ref: '#/components/schemas/CoreDevProfileInfo'
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    NetworkSecurityGroupRule:
+      type: object
+      required: [direction, protocol, port_range, cidr, action]
+      properties:
+        direction:  { type: string, enum: [ingress, egress] }
+        protocol:   { type: string, enum: [tcp, udp, icmp, all] }
+        port_range: { type: string, example: "443" }
+        cidr:       { type: string, example: "0.0.0.0/0" }
+        action:     { type: string, enum: [allow, deny] }
+
+    NetworkSecurityGroup:
+      type: object
+      required: [id, tenant_id, name, rules, state, created_at, updated_at]
+      properties:
+        id:          { type: string }
+        tenant_id:   { type: string }
+        name:        { type: string }
+        description: { type: string, nullable: true }
+        rules:
+          type: array
+          items: { $ref: '#/components/schemas/NetworkSecurityGroupRule' }
+        state:      { $ref: '#/components/schemas/NetworkResourceState' }
+        reason:     { type: string, nullable: true }
+        dev_profile:
+          $ref: '#/components/schemas/CoreDevProfileInfo'
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    NetworkLoadBalancerListener:
+      type: object
+      required: [protocol, port, target_port]
+      properties:
+        protocol:    { type: string, enum: [http, https, tcp] }
+        port:        { type: integer, minimum: 1, maximum: 65535 }
+        target_port: { type: integer, minimum: 1, maximum: 65535 }
+
+    NetworkLoadBalancer:
+      type: object
+      required: [id, tenant_id, name, vpc_id, scheme, listeners, state, created_at, updated_at]
+      properties:
+        id:         { type: string }
+        tenant_id:  { type: string }
+        name:       { type: string }
+        vpc_id:     { type: string }
+        subnet_id:  { type: string, nullable: true }
+        scheme:     { type: string, enum: [internal, public] }
+        vip:        { type: string, nullable: true }
+        listeners:
+          type: array
+          items: { $ref: '#/components/schemas/NetworkLoadBalancerListener' }
+        state:      { $ref: '#/components/schemas/NetworkResourceState' }
+        reason:     { type: string, nullable: true }
+        dev_profile:
+          $ref: '#/components/schemas/CoreDevProfileInfo'
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    NetworkVPCListResponse:
+      type: object
+      required: [items, total]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/NetworkVPC' } }
+        total: { type: integer }
+
+    NetworkSubnetListResponse:
+      type: object
+      required: [items, total]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/NetworkSubnet' } }
+        total: { type: integer }
+
+    NetworkSecurityGroupListResponse:
+      type: object
+      required: [items, total]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/NetworkSecurityGroup' } }
+        total: { type: integer }
+
+    NetworkLoadBalancerListResponse:
+      type: object
+      required: [items, total]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/NetworkLoadBalancer' } }
+        total: { type: integer }
+
+    CreateNetworkVPCRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 128 }
+        cidr: { type: string, default: "10.0.0.0/16" }
+
+    CreateNetworkSubnetRequest:
+      type: object
+      required: [vpc_id, name]
+      properties:
+        vpc_id:  { type: string }
+        name:    { type: string, minLength: 1, maxLength: 128 }
+        cidr:    { type: string, default: "10.0.1.0/24" }
+        gateway: { type: string, nullable: true }
+
+    CreateNetworkSecurityGroupRequest:
+      type: object
+      required: [name]
+      properties:
+        name:        { type: string, minLength: 1, maxLength: 128 }
+        description: { type: string, nullable: true }
+        rules:
+          type: array
+          items: { $ref: '#/components/schemas/NetworkSecurityGroupRule' }
+
+    CreateNetworkLoadBalancerRequest:
+      type: object
+      required: [name, vpc_id]
+      properties:
+        name:      { type: string, minLength: 1, maxLength: 128 }
+        vpc_id:    { type: string }
+        subnet_id: { type: string, nullable: true }
+        scheme:    { type: string, enum: [internal, public], default: internal }
+        listeners:
+          type: array
+          items: { $ref: '#/components/schemas/NetworkLoadBalancerListener' }
+
+    StorageResourceState:
+      type: string
+      enum: [pending, available, failed, deleting, deleted]
+
+    StorageVolume:
+      type: object
+      required: [id, tenant_id, name, size_gib, storage_class, state, created_at, updated_at]
+      properties:
+        id:            { type: string }
+        tenant_id:     { type: string }
+        name:          { type: string }
+        size_gib:      { type: integer, format: int64, minimum: 1 }
+        storage_class: { type: string }
+        state:         { $ref: '#/components/schemas/StorageResourceState' }
+        reason:        { type: string, nullable: true }
+        dev_profile:
+          $ref: '#/components/schemas/CoreDevProfileInfo'
+        created_at:    { type: string, format: date-time }
+        updated_at:    { type: string, format: date-time }
+
+    StorageFilesystem:
+      type: object
+      required: [id, tenant_id, name, protocol, size_gib, state, created_at, updated_at]
+      properties:
+        id:         { type: string }
+        tenant_id:  { type: string }
+        name:       { type: string }
+        protocol:   { type: string, enum: [nfs, cephfs] }
+        size_gib:   { type: integer, format: int64, minimum: 1 }
+        endpoint:   { type: string, nullable: true }
+        state:      { $ref: '#/components/schemas/StorageResourceState' }
+        reason:     { type: string, nullable: true }
+        dev_profile:
+          $ref: '#/components/schemas/CoreDevProfileInfo'
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    StorageObject:
+      type: object
+      required: [id, tenant_id, bucket, key, size_bytes, content_type, state, created_at, updated_at]
+      properties:
+        id:           { type: string }
+        tenant_id:    { type: string }
+        bucket:       { type: string }
+        key:          { type: string }
+        size_bytes:   { type: integer, format: int64, minimum: 0 }
+        content_type: { type: string }
+        state:        { $ref: '#/components/schemas/StorageResourceState' }
+        reason:       { type: string, nullable: true }
+        dev_profile:
+          $ref: '#/components/schemas/CoreDevProfileInfo'
+        created_at:   { type: string, format: date-time }
+        updated_at:   { type: string, format: date-time }
+
+    StorageVolumeListResponse:
+      type: object
+      required: [items, total]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/StorageVolume' } }
+        total: { type: integer }
+
+    StorageFilesystemListResponse:
+      type: object
+      required: [items, total]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/StorageFilesystem' } }
+        total: { type: integer }
+
+    StorageObjectListResponse:
+      type: object
+      required: [items, total]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/StorageObject' } }
+        total: { type: integer }
+
+    CreateStorageVolumeRequest:
+      type: object
+      required: [name, size_gib]
+      properties:
+        name:          { type: string, minLength: 1, maxLength: 128 }
+        size_gib:      { type: integer, format: int64, minimum: 1 }
+        storage_class: { type: string, default: standard }
+
+    CreateStorageFilesystemRequest:
+      type: object
+      required: [name, size_gib]
+      properties:
+        name:     { type: string, minLength: 1, maxLength: 128 }
+        protocol: { type: string, enum: [nfs, cephfs], default: nfs }
+        size_gib: { type: integer, format: int64, minimum: 1 }
+
+    CreateStorageObjectRequest:
+      type: object
+      required: [bucket, key]
+      properties:
+        bucket:       { type: string, minLength: 1, maxLength: 128 }
+        key:          { type: string, minLength: 1, maxLength: 1024 }
+        size_bytes:   { type: integer, format: int64, minimum: 0, default: 0 }
+        content_type: { type: string, default: application/octet-stream }
+
+    VectorStoreState:
+      type: string
+      enum: [pending, ready, failed, deleting, deleted]
+
+    VectorStore:
+      type: object
+      required: [id, tenant_id, name, dimension, metric, state, created_at, updated_at]
+      properties:
+        id:        { type: string }
+        tenant_id: { type: string }
+        name:      { type: string }
+        dimension: { type: integer, minimum: 1 }
+        metric:    { type: string, enum: [cosine, l2, ip] }
+        state:     { $ref: '#/components/schemas/VectorStoreState' }
+        reason:    { type: string, nullable: true }
+        dev_profile:
+          $ref: '#/components/schemas/CoreDevProfileInfo'
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    VectorStoreListResponse:
+      type: object
+      required: [items, total]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/VectorStore' } }
+        total: { type: integer }
+
+    CreateVectorStoreRequest:
+      type: object
+      required: [name, dimension]
+      properties:
+        name:      { type: string, minLength: 1, maxLength: 128 }
+        dimension: { type: integer, minimum: 1 }
+        metric:    { type: string, enum: [cosine, l2, ip], default: cosine }
+
+    VectorStoreSearchRequest:
+      type: object
+      required: [vector]
+      properties:
+        vector:
+          type: array
+          minItems: 1
+          items: { type: number, format: float }
+        top_k: { type: integer, minimum: 1, maximum: 100, default: 10 }
+        filter:
+          type: object
+          additionalProperties: { type: string }
+
+    VectorStoreSearchHit:
+      type: object
+      required: [id, score, metadata]
+      properties:
+        id:       { type: string }
+        score:    { type: number, format: float }
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+
+    VectorStoreSearchResponse:
+      type: object
+      required: [items, total]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/VectorStoreSearchHit' } }
+        total: { type: integer }
 
     BeginOIDCLoginRequest:
       type: object
@@ -475,8 +822,6 @@ security:
 
 # ── API 路径定义 ──────────────────────────────────────────────────────────────
 # 说明：/demo/* 路径已迁移至 api/openapi/dev.yaml（不参与 SDK 生成）
-#       /models /inference-services /knowledge-bases 为过渡期路径，
-#       将在 SPEC-SPLIT-A 批次迁移至 api/openapi/services/v1.yaml
 paths:
 
   # ── 健康检查（K8s probe 必须）──────────────────────────────────────────────
@@ -812,6 +1157,579 @@ paths:
         "403": { $ref: '#/components/responses/Forbidden' }
         "404": { $ref: '#/components/responses/NotFound' }
 
+  # ── 网络资源（Core API Alpha）──────────────────────────────────────────────
+  /networks/vpcs:
+    get:
+      operationId: listNetworkVPCs
+      summary: 查询 VPC 列表
+      tags: [Networks]
+      x-ani-rbac-scope: "scope:networks:read"
+      responses:
+        "200":
+          description: VPC 列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NetworkVPCListResponse' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+    post:
+      operationId: createNetworkVPC
+      summary: 创建 VPC
+      tags: [Networks]
+      x-ani-rbac-scope: "scope:networks:create"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateNetworkVPCRequest' }
+      responses:
+        "201":
+          description: VPC 已创建
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NetworkVPC' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+
+  /networks/vpcs/{vpc_id}:
+    get:
+      operationId: getNetworkVPC
+      summary: 查询 VPC
+      tags: [Networks]
+      x-ani-rbac-scope: "scope:networks:read"
+      parameters:
+        - { name: vpc_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: VPC
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NetworkVPC' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteNetworkVPC
+      summary: 删除 VPC
+      tags: [Networks]
+      x-ani-rbac-scope: "scope:networks:delete"
+      parameters:
+        - { name: vpc_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: VPC 已删除
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NetworkVPC' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+
+  /networks/subnets:
+    get:
+      operationId: listNetworkSubnets
+      summary: 查询子网列表
+      tags: [Networks]
+      x-ani-rbac-scope: "scope:networks:read"
+      responses:
+        "200":
+          description: 子网列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NetworkSubnetListResponse' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+    post:
+      operationId: createNetworkSubnet
+      summary: 创建子网
+      tags: [Networks]
+      x-ani-rbac-scope: "scope:networks:create"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateNetworkSubnetRequest' }
+      responses:
+        "201":
+          description: 子网已创建
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NetworkSubnet' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+
+  /networks/subnets/{subnet_id}:
+    get:
+      operationId: getNetworkSubnet
+      summary: 查询子网
+      tags: [Networks]
+      x-ani-rbac-scope: "scope:networks:read"
+      parameters:
+        - { name: subnet_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: 子网
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NetworkSubnet' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteNetworkSubnet
+      summary: 删除子网
+      tags: [Networks]
+      x-ani-rbac-scope: "scope:networks:delete"
+      parameters:
+        - { name: subnet_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: 子网已删除
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NetworkSubnet' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+
+  /networks/security-groups:
+    get:
+      operationId: listNetworkSecurityGroups
+      summary: 查询安全组列表
+      tags: [Networks]
+      x-ani-rbac-scope: "scope:networks:read"
+      responses:
+        "200":
+          description: 安全组列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NetworkSecurityGroupListResponse' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+    post:
+      operationId: createNetworkSecurityGroup
+      summary: 创建安全组
+      tags: [Networks]
+      x-ani-rbac-scope: "scope:networks:create"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateNetworkSecurityGroupRequest' }
+      responses:
+        "201":
+          description: 安全组已创建
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NetworkSecurityGroup' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+
+  /networks/security-groups/{security_group_id}:
+    get:
+      operationId: getNetworkSecurityGroup
+      summary: 查询安全组
+      tags: [Networks]
+      x-ani-rbac-scope: "scope:networks:read"
+      parameters:
+        - { name: security_group_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: 安全组
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NetworkSecurityGroup' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteNetworkSecurityGroup
+      summary: 删除安全组
+      tags: [Networks]
+      x-ani-rbac-scope: "scope:networks:delete"
+      parameters:
+        - { name: security_group_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: 安全组已删除
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NetworkSecurityGroup' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+
+  /networks/load-balancers:
+    get:
+      operationId: listNetworkLoadBalancers
+      summary: 查询负载入口列表
+      tags: [Networks]
+      x-ani-rbac-scope: "scope:networks:read"
+      responses:
+        "200":
+          description: 负载入口列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NetworkLoadBalancerListResponse' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+    post:
+      operationId: createNetworkLoadBalancer
+      summary: 创建负载入口
+      tags: [Networks]
+      x-ani-rbac-scope: "scope:networks:create"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateNetworkLoadBalancerRequest' }
+      responses:
+        "201":
+          description: 负载入口已创建
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NetworkLoadBalancer' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+
+  /networks/load-balancers/{load_balancer_id}:
+    get:
+      operationId: getNetworkLoadBalancer
+      summary: 查询负载入口
+      tags: [Networks]
+      x-ani-rbac-scope: "scope:networks:read"
+      parameters:
+        - { name: load_balancer_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: 负载入口
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NetworkLoadBalancer' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteNetworkLoadBalancer
+      summary: 删除负载入口
+      tags: [Networks]
+      x-ani-rbac-scope: "scope:networks:delete"
+      parameters:
+        - { name: load_balancer_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: 负载入口已删除
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NetworkLoadBalancer' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+
+  # ── 存储资源（Core API Alpha）──────────────────────────────────────────────
+  /volumes:
+    get:
+      operationId: listStorageVolumes
+      summary: 查询块存储卷列表
+      tags: [Volumes]
+      x-ani-rbac-scope: "scope:volumes:read"
+      responses:
+        "200":
+          description: 块存储卷列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StorageVolumeListResponse' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+    post:
+      operationId: createStorageVolume
+      summary: 创建块存储卷
+      tags: [Volumes]
+      x-ani-rbac-scope: "scope:volumes:create"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateStorageVolumeRequest' }
+      responses:
+        "201":
+          description: 块存储卷已创建
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StorageVolume' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+
+  /volumes/{volume_id}:
+    get:
+      operationId: getStorageVolume
+      summary: 查询块存储卷
+      tags: [Volumes]
+      x-ani-rbac-scope: "scope:volumes:read"
+      parameters:
+        - { name: volume_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: 块存储卷
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StorageVolume' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteStorageVolume
+      summary: 删除块存储卷
+      tags: [Volumes]
+      x-ani-rbac-scope: "scope:volumes:delete"
+      parameters:
+        - { name: volume_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: 块存储卷已删除
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StorageVolume' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+
+  /filesystems:
+    get:
+      operationId: listStorageFilesystems
+      summary: 查询文件存储列表
+      tags: [Filesystems]
+      x-ani-rbac-scope: "scope:filesystems:read"
+      responses:
+        "200":
+          description: 文件存储列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StorageFilesystemListResponse' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+    post:
+      operationId: createStorageFilesystem
+      summary: 创建文件存储
+      tags: [Filesystems]
+      x-ani-rbac-scope: "scope:filesystems:create"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateStorageFilesystemRequest' }
+      responses:
+        "201":
+          description: 文件存储已创建
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StorageFilesystem' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+
+  /filesystems/{filesystem_id}:
+    get:
+      operationId: getStorageFilesystem
+      summary: 查询文件存储
+      tags: [Filesystems]
+      x-ani-rbac-scope: "scope:filesystems:read"
+      parameters:
+        - { name: filesystem_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: 文件存储
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StorageFilesystem' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteStorageFilesystem
+      summary: 删除文件存储
+      tags: [Filesystems]
+      x-ani-rbac-scope: "scope:filesystems:delete"
+      parameters:
+        - { name: filesystem_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: 文件存储已删除
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StorageFilesystem' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+
+  /objects:
+    get:
+      operationId: listStorageObjects
+      summary: 查询对象元数据列表
+      tags: [ObjectStore]
+      x-ani-rbac-scope: "scope:objects:read"
+      responses:
+        "200":
+          description: 对象元数据列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StorageObjectListResponse' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+    post:
+      operationId: createStorageObject
+      summary: 创建对象元数据
+      tags: [ObjectStore]
+      x-ani-rbac-scope: "scope:objects:create"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateStorageObjectRequest' }
+      responses:
+        "201":
+          description: 对象元数据已创建
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StorageObject' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+
+  /objects/{object_id}:
+    get:
+      operationId: getStorageObject
+      summary: 查询对象元数据
+      tags: [ObjectStore]
+      x-ani-rbac-scope: "scope:objects:read"
+      parameters:
+        - { name: object_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: 对象元数据
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StorageObject' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteStorageObject
+      summary: 删除对象元数据
+      tags: [ObjectStore]
+      x-ani-rbac-scope: "scope:objects:delete"
+      parameters:
+        - { name: object_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: 对象元数据已删除
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StorageObject' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+
+  # ── 向量存储（Core API Alpha）──────────────────────────────────────────────
+  /vector-stores:
+    get:
+      operationId: listVectorStores
+      summary: 查询向量存储列表
+      tags: [VectorStore]
+      x-ani-rbac-scope: "scope:vector-stores:read"
+      responses:
+        "200":
+          description: 向量存储列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VectorStoreListResponse' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+    post:
+      operationId: createVectorStore
+      summary: 创建向量存储
+      tags: [VectorStore]
+      x-ani-rbac-scope: "scope:vector-stores:create"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateVectorStoreRequest' }
+      responses:
+        "201":
+          description: 向量存储已创建
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VectorStore' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+
+  /vector-stores/{vector_store_id}:
+    get:
+      operationId: getVectorStore
+      summary: 查询向量存储
+      tags: [VectorStore]
+      x-ani-rbac-scope: "scope:vector-stores:read"
+      parameters:
+        - { name: vector_store_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: 向量存储
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VectorStore' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteVectorStore
+      summary: 删除向量存储
+      tags: [VectorStore]
+      x-ani-rbac-scope: "scope:vector-stores:delete"
+      parameters:
+        - { name: vector_store_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: 向量存储已删除
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VectorStore' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+
+  /vector-stores/{vector_store_id}/search:
+    post:
+      operationId: searchVectorStore
+      summary: 搜索向量存储
+      tags: [VectorStore]
+      x-ani-rbac-scope: "scope:vector-stores:search"
+      parameters:
+        - { name: vector_store_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VectorStoreSearchRequest' }
+      responses:
+        "200":
+          description: 向量检索结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VectorStoreSearchResponse' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+
   # ── 平台品牌化 ──────────────────────────────────────────────────────────────
   /branding:
     get:
@@ -832,368 +1750,6 @@ paths:
                   primary_color:  { type: string, example: "#1677FF" }
                   secondary_color:{ type: string }
                   icp_number:     { type: string }
-
-  # ── 模型管理 ────────────────────────────────────────────────────────────────
-  /models:
-    get:
-      operationId: listModels
-      summary: 获取模型列表
-      tags: [Models]
-      parameters:
-        - { name: status, in: query, schema: { type: string,
-            enum: [pending, downloading, ready, error, deleted] } }
-        - { name: limit, in: query, schema: { type: integer, default: 20, minimum: 1, maximum: 100 } }
-        - { name: cursor, in: query, schema: { type: string }, description: "上一页返回的 next_cursor" }
-      responses:
-        "200":
-          description: 模型列表
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/CursorPage'
-                  - properties:
-                      items: { type: array, items: { $ref: '#/components/schemas/Model' } }
-        "401": { $ref: '#/components/responses/Unauthorized' }
-        "403": { $ref: '#/components/responses/Forbidden' }
-
-    post:
-      operationId: createModel
-      summary: 创建模型元数据记录（上传文件前必须先调用此接口）
-      tags: [Models]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              required: [name, display_name]
-              properties:
-                name:
-                  type: string
-                  pattern: '^[a-z0-9][a-z0-9.-]{0,62}$'
-                  description: "模型唯一标识（仅小写字母/数字/点/连字符，1-63字符）"
-                display_name: { type: string, minLength: 1, maxLength: 128 }
-                description:  { type: string, maxLength: 1024 }
-                capabilities:
-                  type: array
-                  items: { type: string, enum: [text-generation, embedding, speech-to-text] }
-      responses:
-        "201":
-          description: 模型记录已创建
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Model' }
-        "400": { $ref: '#/components/responses/BadRequest' }
-        "401": { $ref: '#/components/responses/Unauthorized' }
-        "409": { $ref: '#/components/responses/Conflict' }
-
-  /models/import:
-    post:
-      operationId: importModel
-      summary: 从 HuggingFace 或 ModelScope 异步导入模型
-      description: |
-        提交后立即返回 202 和 AsyncTask。
-        客户端应轮询 GET /api/v1/tasks/{task_id} 或配置 webhook_url 接收完成通知。
-        使用 idempotency_key 防止重复导入：相同 key 的第二次调用直接返回已有任务。
-      tags: [Models]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              required: [source, repo_id, idempotency_key]
-              properties:
-                source:
-                  type: string
-                  enum: [huggingface, modelscope]
-                repo_id:
-                  type: string
-                  example: "Qwen/Qwen2.5-72B-Instruct"
-                  minLength: 3
-                  maxLength: 256
-                revision:
-                  type: string
-                  default: "main"
-                  description: "分支/Tag/commit hash，默认 main"
-                idempotency_key:
-                  type: string
-                  maxLength: 128
-                  description: "客户端生成的唯一键，防止重复提交"
-                webhook_url:
-                  type: string
-                  format: uri
-                  description: "任务完成后回调的 URL（可选）"
-      responses:
-        "202":
-          description: 导入任务已提交
-          headers:
-            Location:
-              schema: { type: string }
-              description: "GET /api/v1/tasks/{task_id} 的完整路径"
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/AsyncTask' }
-        "400": { $ref: '#/components/responses/BadRequest' }
-        "401": { $ref: '#/components/responses/Unauthorized' }
-
-  /models/{model_id}:
-    get:
-      summary: 获取模型详情
-      tags: [Models]
-      parameters:
-        - { name: model_id, in: path, required: true, schema: { type: string, format: uuid } }
-      responses:
-        "200":
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Model' }
-        "404":
-          $ref: '#/components/responses/NotFound'
-
-    delete:
-      summary: 删除模型
-      tags: [Models]
-      parameters:
-        - { name: model_id, in: path, required: true, schema: { type: string, format: uuid } }
-      responses:
-        "204":
-          description: 已删除
-
-  /models/{model_id}/versions:
-    post:
-      summary: 上传模型版本（分片上传完成后调用）
-      tags: [Models]
-      parameters:
-        - { name: model_id, in: path, required: true, schema: { type: string, format: uuid } }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              required: [version, format, storage_path, checksum_sha256, size_bytes]
-              properties:
-                version:         { type: string }
-                format:          { type: string, enum: [safetensors, gguf, pytorch] }
-                storage_path:    { type: string }
-                checksum_sha256: { type: string }
-                size_bytes:      { type: integer }
-                is_encrypted:    { type: boolean, default: false }
-                encrypt_algo:    { type: string }
-                encrypt_hint:    { type: string }
-      responses:
-        "201":
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ModelVersion' }
-
-  # ── 推理服务 ────────────────────────────────────────────────────────────────
-  /inference-services:
-    get:
-      summary: 获取推理服务列表
-      tags: [InferenceServices]
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                properties:
-                  items: { type: array, items: { $ref: '#/components/schemas/InferenceService' } }
-
-    post:
-      summary: 部署推理服务（异步）
-      tags: [InferenceServices]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              required: [name, model]
-              properties:
-                name:              { type: string }
-                model:             { type: string, description: "格式: name:version" }
-                replicas:          { type: integer, default: 1 }
-                gpu_type:          { type: string }
-                gpu_count_per_pod: { type: integer, default: 1 }
-                max_concurrency:   { type: integer, default: 8 }
-                placement:
-                  type: object
-                  properties:
-                    region: { type: string }
-                    az:     { type: string }
-                encryption_key_secret:
-                  type: string
-                  description: "K8s Secret 名称，含模型解密密钥（加密模型必填）"
-      responses:
-        "202":
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/InferenceService' }
-
-  /inference-services/{service_id}:
-    get:
-      summary: 获取推理服务详情
-      tags: [InferenceServices]
-      parameters:
-        - { name: service_id, in: path, required: true, schema: { type: string, format: uuid } }
-      responses:
-        "200":
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/InferenceService' }
-
-    delete:
-      summary: 停止并删除推理服务
-      tags: [InferenceServices]
-      parameters:
-        - { name: service_id, in: path, required: true, schema: { type: string, format: uuid } }
-      responses:
-        "202":
-          description: 停止任务已提交
-
-  # ── 知识库 ──────────────────────────────────────────────────────────────────
-  /knowledge-bases:
-    get:
-      summary: 知识库列表
-      tags: [KnowledgeBases]
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                properties:
-                  items: { type: array, items: { $ref: '#/components/schemas/KnowledgeBase' } }
-
-    post:
-      summary: 创建知识库
-      tags: [KnowledgeBases]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              required: [name]
-              properties:
-                name:            { type: string }
-                description:     { type: string }
-                embedding_model: { type: string, default: "bge-m3" }
-                chunk_size:      { type: integer, default: 512 }
-                top_k:           { type: integer, default: 5 }
-      responses:
-        "201":
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/KnowledgeBase' }
-
-  /knowledge-bases/{kb_id}/documents:
-    get:
-      summary: 文档列表
-      tags: [KnowledgeBases]
-      parameters:
-        - { name: kb_id, in: path, required: true, schema: { type: string, format: uuid } }
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                properties:
-                  items: { type: array, items: { $ref: '#/components/schemas/KBDocument' } }
-
-    post:
-      summary: 上传文档（multipart/form-data）
-      tags: [KnowledgeBases]
-      parameters:
-        - { name: kb_id, in: path, required: true, schema: { type: string, format: uuid } }
-      requestBody:
-        required: true
-        content:
-          multipart/form-data:
-            schema:
-              required: [file]
-              properties:
-                file: { type: string, format: binary }
-      responses:
-        "202":
-          description: 文档已上传，解析任务进行中
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/KBDocument' }
-
-  /knowledge-bases/{kb_id}/query:
-    post:
-      operationId: queryKnowledgeBase
-      summary: 知识库问答（JSON，非流式）
-      description: |
-        混合 RAG 问答：向量检索 + 关键词检索 + RRF 融合 + LLM 生成。
-        当所有候选 chunk 的相关性分数均低于 score_threshold 时，
-        返回 `{ answer: "未找到相关内容，请联系管理员确认。", sources: [] }`
-        而不是编造答案。
-        流式版本请使用 GET /knowledge-bases/{kb_id}/query/stream
-      tags: [KnowledgeBases]
-      parameters:
-        - { name: kb_id, in: path, required: true, schema: { type: string, format: uuid } }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              required: [question, idempotency_key]
-              properties:
-                question:
-                  type: string
-                  minLength: 1
-                  maxLength: 2000
-                  example: "差旅报销标准是什么？"
-                session_id:
-                  type: string
-                  format: uuid
-                  nullable: true
-                  description: "多轮对话会话 ID；为空时创建新会话"
-                idempotency_key:
-                  type: string
-                  maxLength: 128
-                  description: "防止重复提交同一问题（网络重试时避免重复计费）"
-                top_k:
-                  type: integer
-                  default: 5
-                  minimum: 1
-                  maximum: 20
-                score_threshold:
-                  type: number
-                  format: float
-                  default: 0.3
-                  minimum: 0.0
-                  maximum: 1.0
-      responses:
-        "200":
-          description: JSON 格式的问答结果
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/KBQueryResponse' }
-        "400": { $ref: '#/components/responses/BadRequest' }
-        "401": { $ref: '#/components/responses/Unauthorized' }
-        "404": { $ref: '#/components/responses/NotFound' }
-
-  # SSE 流式问答使用独立端点，避免同一 path 混用 JSON 和 event-stream（SDK 生成会混乱）
-  /knowledge-bases/{kb_id}/query/stream:
-    get:
-      operationId: streamQueryKnowledgeBase
-      summary: 知识库问答（SSE 流式，适合长回答和前端打字机效果）
-      tags: [KnowledgeBases]
-      parameters:
-        - { name: kb_id, in: path, required: true, schema: { type: string, format: uuid } }
-        - { name: question, in: query, required: true, schema: { type: string, minLength: 1, maxLength: 2000 } }
-        - { name: session_id, in: query, schema: { type: string, format: uuid } }
-        - { name: top_k, in: query, schema: { type: integer, default: 5, minimum: 1, maximum: 20 } }
-      responses:
-        "200":
-          description: |
-            SSE 流。每个事件格式：`data: {"delta": "...", "done": false}`
-            最后一个事件：`data: {"done": true, "sources": [...], "session_id": "..."}`
-          content:
-            text/event-stream:
-              schema: { type: string }
-        "400": { $ref: '#/components/responses/BadRequest' }
-        "401": { $ref: '#/components/responses/Unauthorized' }
 
   # ── 实例操作历史（Control Plane 操作追踪）──────────────────────────────────
   /instances/{instance_id}/operations:
@@ -1286,8 +1842,6 @@ paths:
                         period:         { type: string }
 
 # ── Tag 分组（Swagger UI 显示顺序）──────────────────────────────────────────
-# 注：Models/InferenceServices/KnowledgeBases 为 SPEC-SPLIT-A 过渡期遗留，
-#     正式路径在 api/openapi/services/v1.yaml
 tags:
   - { name: Health,         description: "健康检查（K8s liveness/readiness probe）" }
   - { name: Auth,           description: "认证与授权" }
@@ -1310,8 +1864,3 @@ tags:
   - { name: Audit,          description: "审计日志" }
   - { name: Branding,       description: "平台品牌化配置" }
   - { name: Tasks,          description: "异步任务查询" }
-  # 过渡期保留（SPEC-SPLIT-A 完成后移除）
-  - { name: Models,            description: "⚠️ 过渡期：模型仓库（迁移至 services/v1.yaml 中）" }
-  - { name: InferenceServices, description: "⚠️ 过渡期：推理服务（迁移至 services/v1.yaml 中）" }
-  - { name: KnowledgeBases,    description: "⚠️ 过渡期：知识库服务（迁移至 services/v1.yaml 中）" }
-  - { name: Metering,          description: "计量与用量统计" }

@@ -67,6 +67,9 @@ func inferPermission(method, path string) (string, string) {
 	for i, part := range parts {
 		if part == "v1" && i+1 < len(parts) {
 			resource = parts[i+1]
+			if resource == "svc" && i+2 < len(parts) {
+				resource = parts[i+2]
+			}
 			break
 		}
 	}

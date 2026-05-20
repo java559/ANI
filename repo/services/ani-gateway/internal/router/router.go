@@ -1,6 +1,7 @@
 // Package router registers all ANI Gateway API routes.
-// All routes follow the pattern /api/v1/{resource}.
-// Stubs return 501 until the backing service is implemented.
+// Core routes follow /api/v1/{resource}; Services transitional routes follow
+// /api/v1/svc/{resource}. Stubs return 501 until the backing service is
+// implemented by the owning team.
 package router
 
 import "github.com/cloudwego/hertz/pkg/app/server"
@@ -12,14 +13,19 @@ func Register(h *server.Hertz) {
 
 	v1 := h.Group("/api/v1")
 	registerBranding(v1)
-	registerModels(v1)
-	registerInferenceServices(v1)
-	registerKnowledgeBases(v1)
 	registerTasks(v1)
 	registerAuth(v1)
 	registerMetering(v1)
 	registerHarbor(v1)
 	registerDemoInstances(v1)
+	registerNetworkResources(v1)
+	registerStorageResources(v1)
+	registerVectorStoreResources(v1)
+
+	svc := h.Group("/api/v1/svc")
+	registerModels(svc)
+	registerInferenceServices(svc)
+	registerKnowledgeBases(svc)
 
 	// OpenAI-compatible inference proxy (separate URL prefix, no /api prefix)
 	h.Group("/v1").POST("/chat/completions", inferenceProxy)

@@ -16,6 +16,7 @@ type LocalInstanceService struct {
 	store        ports.WorkloadInstanceStore
 	operations   ports.WorkloadOperationStore
 	lifecycle    ports.WorkloadInstanceLifecycleExecutor
+	identity     ports.WorkloadIdentityService
 	ops          ports.WorkloadInstanceOps
 }
 
@@ -30,6 +31,12 @@ func WithInstanceLifecycleExecutor(lifecycle ports.WorkloadInstanceLifecycleExec
 func WithOperationStore(operations ports.WorkloadOperationStore) InstanceServiceOption {
 	return func(service *LocalInstanceService) {
 		service.operations = operations
+	}
+}
+
+func WithWorkloadIdentityService(identity ports.WorkloadIdentityService) InstanceServiceOption {
+	return func(service *LocalInstanceService) {
+		service.identity = identity
 	}
 }
 
@@ -140,6 +147,42 @@ func (s *LocalInstanceService) Create(ctx context.Context, request ports.Workloa
 	if err := s.recordCreateTimeline(ctx, operation.ID, result); err != nil {
 		return ports.WorkloadInstanceCreateResult{}, err
 	}
+	if s.identity != nil && result.Identity == nil {
+		identity, err := s.identity.BindScopedKey(ctx, ports.WorkloadIdentityBindRequest{
+			TenantID:     result.Ref.TenantID,
+			InstanceID:   result.Ref.InstanceID,
+			InstanceName: request.Spec.Name,
+			Kind:         result.Ref.Kind,
+			UserID:       request.UserID,
+			RequestedAt:  firstNonZeroTime(request.RequestedAt, result.FinalStatus.UpdatedAt),
+		})
+		if err != nil {
+			_, _ = s.operations.AddOperationStep(ctx, operation.ID, ports.WorkloadOperationStep{
+				StepName: "workload_identity_bind",
+				Status:   ports.WorkloadOperationStepFailed,
+				Message:  err.Error(),
+			})
+			_, _ = s.operations.UpdateOperation(ctx, operation.ID, ports.WorkloadOperationUpdate{
+				InstanceID:     result.Ref.InstanceID,
+				Status:         ports.WorkloadOperationFailed,
+				FailureReason:  "workload_identity_bind_failed",
+				FailureMessage: err.Error(),
+				RetryEligible:  true,
+				UpdatedAt:      firstNonZeroTime(request.RequestedAt, result.FinalStatus.UpdatedAt),
+			})
+			return ports.WorkloadInstanceCreateResult{}, err
+		}
+		result.Identity = &identity
+	}
+	if result.Identity != nil {
+		if _, err := s.operations.AddOperationStep(ctx, operation.ID, ports.WorkloadOperationStep{
+			StepName: "workload_identity_bind",
+			Status:   ports.WorkloadOperationStepSucceeded,
+			Message:  "scoped api key " + result.Identity.KeyPrefix + " bound to instance",
+		}); err != nil {
+			return ports.WorkloadInstanceCreateResult{}, err
+		}
+	}
 	if _, err := s.operations.UpdateOperation(ctx, operation.ID, ports.WorkloadOperationUpdate{
 		InstanceID:   result.Ref.InstanceID,
 		Status:       ports.WorkloadOperationSucceeded,
@@ -161,7 +204,11 @@ func (s *LocalInstanceService) Get(ctx context.Context, request ports.WorkloadIn
 	if strings.TrimSpace(request.InstanceID) == "" {
 		return ports.WorkloadInstanceRecord{}, fmt.Errorf("%w: instanceID is required", ports.ErrInvalid)
 	}
-	return s.store.Get(ctx, request.TenantID, request.InstanceID)
+	record, err := s.store.Get(ctx, request.TenantID, request.InstanceID)
+	if err != nil {
+		return ports.WorkloadInstanceRecord{}, err
+	}
+	return s.withIdentity(ctx, record), nil
 }
 
 func (s *LocalInstanceService) List(ctx context.Context, request ports.WorkloadInstanceListRequest) ([]ports.WorkloadInstanceRecord, error) {
@@ -171,7 +218,14 @@ func (s *LocalInstanceService) List(ctx context.Context, request ports.WorkloadI
 	if strings.TrimSpace(request.TenantID) == "" {
 		return nil, fmt.Errorf("%w: tenantID is required", ports.ErrInvalid)
 	}
-	return s.store.List(ctx, request.TenantID, request.Kind)
+	records, err := s.store.List(ctx, request.TenantID, request.Kind)
+	if err != nil {
+		return nil, err
+	}
+	for i := range records {
+		records[i] = s.withIdentity(ctx, records[i])
+	}
+	return records, nil
 }
 
 func (s *LocalInstanceService) Start(ctx context.Context, request ports.WorkloadInstanceLifecycleRequest) (ports.WorkloadInstanceRecord, error) {
@@ -436,6 +490,40 @@ func (s *LocalInstanceService) applyLifecycle(ctx context.Context, request ports
 		}); err != nil {
 			return ports.WorkloadInstanceRecord{}, err
 		}
+		if request.Action == ports.WorkloadLifecycleDelete && s.identity != nil {
+			identity, err := s.identity.RevokeForInstance(ctx, ports.WorkloadIdentityRevokeRequest{
+				TenantID:    request.TenantID,
+				InstanceID:  request.InstanceID,
+				RequestedAt: firstNonZeroTime(request.RequestedAt, record.UpdatedAt),
+			})
+			if err != nil {
+				_, _ = s.operations.AddOperationStep(ctx, opID, ports.WorkloadOperationStep{
+					StepName: "workload_identity_revoke",
+					Status:   ports.WorkloadOperationStepFailed,
+					Message:  err.Error(),
+				})
+				_, _ = s.operations.UpdateOperation(ctx, opID, ports.WorkloadOperationUpdate{
+					Status:         ports.WorkloadOperationFailed,
+					FailureReason:  "workload_identity_revoke_failed",
+					FailureMessage: err.Error(),
+					RetryEligible:  true,
+					UpdatedAt:      firstNonZeroTime(request.RequestedAt, record.UpdatedAt),
+				})
+				return ports.WorkloadInstanceRecord{}, err
+			}
+			record.Identity = &identity
+			message := "scoped api key revoked"
+			if identity.KeyPrefix != "" {
+				message = "scoped api key " + identity.KeyPrefix + " revoked"
+			}
+			if _, err := s.operations.AddOperationStep(ctx, opID, ports.WorkloadOperationStep{
+				StepName: "workload_identity_revoke",
+				Status:   ports.WorkloadOperationStepSucceeded,
+				Message:  message,
+			}); err != nil {
+				return ports.WorkloadInstanceRecord{}, err
+			}
+		}
 		if _, err := s.operations.UpdateOperation(ctx, opID, ports.WorkloadOperationUpdate{
 			Status:       ports.WorkloadOperationSucceeded,
 			UpdatedAt:    record.UpdatedAt,
@@ -470,6 +558,18 @@ func (s *LocalInstanceService) recordCreateTimeline(ctx context.Context, operati
 		}
 	}
 	return nil
+}
+
+func (s *LocalInstanceService) withIdentity(ctx context.Context, record ports.WorkloadInstanceRecord) ports.WorkloadInstanceRecord {
+	if s.identity == nil {
+		return record
+	}
+	identity, err := s.identity.GetForInstance(ctx, record.TenantID, record.InstanceID)
+	if err != nil {
+		return record
+	}
+	record.Identity = &identity
+	return record
 }
 
 func boolStepStatus(ok bool) ports.WorkloadOperationStepStatus {

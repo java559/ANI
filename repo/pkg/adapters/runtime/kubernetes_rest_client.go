@@ -92,17 +92,9 @@ func (c *KubernetesRESTClient) Apply(ctx context.Context, request ports.Workload
 		return ports.WorkloadProviderApplyResult{}, err
 	}
 	provider := request.Manifests[0].Provider
-	refs := make([]string, 0, len(request.Manifests))
-	for _, manifest := range request.Manifests {
-		resource, err := parseKubernetesResource(manifest)
-		if err != nil {
-			return ports.WorkloadProviderApplyResult{}, err
-		}
-		query := "fieldManager=" + url.QueryEscape(c.fieldManager) + "&force=true"
-		if _, err := c.do(ctx, http.MethodPatch, c.resourceURL(resource, query), kubernetesApplyPatchContentType, []byte(manifest.Content)); err != nil {
-			return ports.WorkloadProviderApplyResult{}, err
-		}
-		refs = append(refs, resource.ref())
+	refs, err := c.ApplyManifests(ctx, request.Manifests)
+	if err != nil {
+		return ports.WorkloadProviderApplyResult{}, err
 	}
 	return ports.WorkloadProviderApplyResult{
 		Applied:       true,
@@ -113,6 +105,97 @@ func (c *KubernetesRESTClient) Apply(ctx context.Context, request ports.Workload
 		Reason:        "applied by Kubernetes REST client",
 		Warnings:      request.DryRunResult.Warnings,
 		AppliedAt:     c.now().UTC(),
+	}, nil
+}
+
+func (c *KubernetesRESTClient) ApplyManifests(ctx context.Context, manifests []ports.WorkloadManifest) ([]string, error) {
+	if len(manifests) == 0 {
+		return nil, fmt.Errorf("%w: at least one manifest is required for Kubernetes apply", ports.ErrInvalid)
+	}
+	refs := make([]string, 0, len(manifests))
+	for _, manifest := range manifests {
+		resource, err := parseKubernetesResource(manifest)
+		if err != nil {
+			return nil, err
+		}
+		query := "fieldManager=" + url.QueryEscape(c.fieldManager) + "&force=true"
+		if _, err := c.do(ctx, http.MethodPatch, c.resourceURL(resource, query), kubernetesApplyPatchContentType, []byte(manifest.Content)); err != nil {
+			return nil, err
+		}
+		refs = append(refs, resource.ref())
+	}
+	return refs, nil
+}
+
+func (c *KubernetesRESTClient) ObserveNetworkResource(ctx context.Context, request ports.NetworkProviderStatusRequest) (ports.NetworkProviderStatusResult, error) {
+	if request.TenantID == "" || request.ResourceKind == "" || request.ResourceID == "" {
+		return ports.NetworkProviderStatusResult{}, fmt.Errorf("%w: tenant id, resource kind, and resource id are required for network observation", ports.ErrInvalid)
+	}
+	if !request.ApplyResult.Applied {
+		return ports.NetworkProviderStatusResult{}, fmt.Errorf("%w: network provider apply must be applied before Kubernetes observation", ports.ErrInvalid)
+	}
+	if len(request.ApplyResult.ResourceRefs) == 0 {
+		return ports.NetworkProviderStatusResult{}, fmt.Errorf("%w: network resource refs are required for Kubernetes observation", ports.ErrInvalid)
+	}
+
+	resource, err := resourceFromRef(request.ApplyResult.Provider, tenantNamespace(request.TenantID), request.ApplyResult.ResourceRefs[0])
+	if err != nil {
+		return ports.NetworkProviderStatusResult{}, err
+	}
+	body, err := c.do(ctx, http.MethodGet, c.resourceURL(resource, ""), "", nil)
+	if err != nil {
+		return ports.NetworkProviderStatusResult{}, err
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return ports.NetworkProviderStatusResult{}, fmt.Errorf("%w: invalid Kubernetes network observation response: %v", ports.ErrInvalid, err)
+	}
+
+	return ports.NetworkProviderStatusResult{
+		TenantID:     request.TenantID,
+		ResourceKind: request.ResourceKind,
+		ResourceID:   request.ResourceID,
+		Provider:     request.ApplyResult.Provider,
+		ResourceRefs: append([]string(nil), request.ApplyResult.ResourceRefs...),
+		State:        networkStateFromKubernetesObject(doc),
+		Reason:       networkReasonFromKubernetesObject(doc),
+		ObservedAt:   c.now().UTC(),
+	}, nil
+}
+
+func (c *KubernetesRESTClient) ObserveStorageResource(ctx context.Context, request ports.StorageProviderStatusRequest) (ports.StorageProviderStatusResult, error) {
+	if request.TenantID == "" || request.ResourceKind == "" || request.ResourceID == "" {
+		return ports.StorageProviderStatusResult{}, fmt.Errorf("%w: tenant id, resource kind, and resource id are required for storage observation", ports.ErrInvalid)
+	}
+	if !request.ApplyResult.Applied {
+		return ports.StorageProviderStatusResult{}, fmt.Errorf("%w: storage provider apply must be applied before Kubernetes observation", ports.ErrInvalid)
+	}
+	if len(request.ApplyResult.ResourceRefs) == 0 {
+		return ports.StorageProviderStatusResult{}, fmt.Errorf("%w: storage resource refs are required for Kubernetes observation", ports.ErrInvalid)
+	}
+
+	resource, err := resourceFromRef(request.ApplyResult.Provider, tenantNamespace(request.TenantID), request.ApplyResult.ResourceRefs[0])
+	if err != nil {
+		return ports.StorageProviderStatusResult{}, err
+	}
+	body, err := c.do(ctx, http.MethodGet, c.resourceURL(resource, ""), "", nil)
+	if err != nil {
+		return ports.StorageProviderStatusResult{}, err
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return ports.StorageProviderStatusResult{}, fmt.Errorf("%w: invalid Kubernetes storage observation response: %v", ports.ErrInvalid, err)
+	}
+
+	return ports.StorageProviderStatusResult{
+		TenantID:     request.TenantID,
+		ResourceKind: request.ResourceKind,
+		ResourceID:   request.ResourceID,
+		Provider:     request.ApplyResult.Provider,
+		ResourceRefs: append([]string(nil), request.ApplyResult.ResourceRefs...),
+		State:        storageStateFromKubernetesObject(doc),
+		Reason:       storageReasonFromKubernetesObject(doc),
+		ObservedAt:   c.now().UTC(),
 	}, nil
 }
 
@@ -200,9 +283,16 @@ type kubernetesResource struct {
 	Kind       string
 	Namespace  string
 	Name       string
+	Namespaced bool
 }
 
 func (r kubernetesResource) collectionPath() string {
+	if !r.Namespaced {
+		if r.APIGroup == "" {
+			return "/api/" + r.APIVersion + "/" + r.Resource
+		}
+		return "/apis/" + r.APIGroup + "/" + r.APIVersion + "/" + r.Resource
+	}
 	if r.APIGroup == "" {
 		return "/api/" + r.APIVersion + "/namespaces/" + url.PathEscape(r.Namespace) + "/" + r.Resource
 	}
@@ -227,12 +317,15 @@ func parseKubernetesResource(manifest ports.WorkloadManifest) (kubernetesResourc
 	metadata, _ := doc["metadata"].(map[string]any)
 	name, _ := metadata["name"].(string)
 	namespace, _ := metadata["namespace"].(string)
-	if name == "" || namespace == "" {
-		return kubernetesResource{}, fmt.Errorf("%w: Kubernetes manifest metadata.name and metadata.namespace are required", ports.ErrInvalid)
+	if name == "" {
+		return kubernetesResource{}, fmt.Errorf("%w: Kubernetes manifest metadata.name is required", ports.ErrInvalid)
 	}
 	resource, err := resourceMapping(manifest.Provider, apiVersion, kind)
 	if err != nil {
 		return kubernetesResource{}, err
+	}
+	if resource.Namespaced && namespace == "" {
+		return kubernetesResource{}, fmt.Errorf("%w: Kubernetes manifest metadata.namespace is required for %s", ports.ErrInvalid, kind)
 	}
 	resource.Namespace = namespace
 	resource.Name = name
@@ -260,11 +353,21 @@ func resourceFromRef(provider string, namespace string, ref string) (kubernetesR
 func resourceMapping(provider string, apiVersion string, kind string) (kubernetesResource, error) {
 	switch provider + "/" + kind {
 	case "kubernetes/Deployment":
-		return kubernetesResource{Provider: provider, APIGroup: "apps", APIVersion: "v1", Resource: "deployments", Kind: kind}, nil
+		return kubernetesResource{Provider: provider, APIGroup: "apps", APIVersion: "v1", Resource: "deployments", Kind: kind, Namespaced: true}, nil
 	case "kubernetes/Job":
-		return kubernetesResource{Provider: provider, APIGroup: "batch", APIVersion: "v1", Resource: "jobs", Kind: kind}, nil
+		return kubernetesResource{Provider: provider, APIGroup: "batch", APIVersion: "v1", Resource: "jobs", Kind: kind, Namespaced: true}, nil
+	case "kubernetes/NetworkPolicy":
+		return kubernetesResource{Provider: provider, APIGroup: "networking.k8s.io", APIVersion: "v1", Resource: "networkpolicies", Kind: kind, Namespaced: true}, nil
+	case "kubernetes/Service":
+		return kubernetesResource{Provider: provider, APIGroup: "", APIVersion: "v1", Resource: "services", Kind: kind, Namespaced: true}, nil
+	case "kubernetes/PersistentVolumeClaim":
+		return kubernetesResource{Provider: provider, APIGroup: "", APIVersion: "v1", Resource: "persistentvolumeclaims", Kind: kind, Namespaced: true}, nil
 	case "kubevirt/VirtualMachine":
-		return kubernetesResource{Provider: provider, APIGroup: "kubevirt.io", APIVersion: "v1", Resource: "virtualmachines", Kind: kind}, nil
+		return kubernetesResource{Provider: provider, APIGroup: "kubevirt.io", APIVersion: "v1", Resource: "virtualmachines", Kind: kind, Namespaced: true}, nil
+	case "kubeovn/Vpc":
+		return kubernetesResource{Provider: provider, APIGroup: "kubeovn.io", APIVersion: "v1", Resource: "vpcs", Kind: kind}, nil
+	case "kubeovn/Subnet":
+		return kubernetesResource{Provider: provider, APIGroup: "kubeovn.io", APIVersion: "v1", Resource: "subnets", Kind: kind}, nil
 	default:
 		if apiVersion != "" {
 			return kubernetesResource{}, fmt.Errorf("%w: unsupported Kubernetes provider resource %s %s/%s", ports.ErrUnsupported, provider, apiVersion, kind)
@@ -325,6 +428,101 @@ func reasonFromKubernetesObject(doc map[string]any) string {
 		return reason
 	}
 	return ""
+}
+
+func networkStateFromKubernetesObject(doc map[string]any) ports.NetworkResourceState {
+	metadata, _ := doc["metadata"].(map[string]any)
+	if deletionTimestamp, _ := metadata["deletionTimestamp"].(string); deletionTimestamp != "" {
+		return ports.NetworkResourceDeleting
+	}
+	status, _ := doc["status"].(map[string]any)
+	if phase, _ := status["phase"].(string); strings.EqualFold(phase, "failed") {
+		return ports.NetworkResourceFailed
+	}
+	for _, condition := range kubernetesConditions(status) {
+		conditionType, _ := condition["type"].(string)
+		conditionStatus, _ := condition["status"].(string)
+		if (conditionType == "Ready" || conditionType == "Available") && conditionStatus == "False" {
+			return ports.NetworkResourceFailed
+		}
+	}
+	return ports.NetworkResourceAvailable
+}
+
+func networkReasonFromKubernetesObject(doc map[string]any) string {
+	status, _ := doc["status"].(map[string]any)
+	for _, condition := range kubernetesConditions(status) {
+		conditionType, _ := condition["type"].(string)
+		conditionStatus, _ := condition["status"].(string)
+		if (conditionType == "Ready" || conditionType == "Available") && conditionStatus == "False" {
+			if message, _ := condition["message"].(string); message != "" {
+				return message
+			}
+			if reason, _ := condition["reason"].(string); reason != "" {
+				return reason
+			}
+		}
+	}
+	if reason, _ := status["reason"].(string); reason != "" {
+		return reason
+	}
+	return "observed by Kubernetes network provider"
+}
+
+func storageStateFromKubernetesObject(doc map[string]any) ports.StorageResourceState {
+	metadata, _ := doc["metadata"].(map[string]any)
+	if deletionTimestamp, _ := metadata["deletionTimestamp"].(string); deletionTimestamp != "" {
+		return ports.StorageResourceDeleting
+	}
+	status, _ := doc["status"].(map[string]any)
+	if phase, _ := status["phase"].(string); phase != "" {
+		switch strings.ToLower(phase) {
+		case "bound", "available":
+			return ports.StorageResourceAvailable
+		case "lost", "failed":
+			return ports.StorageResourceFailed
+		case "pending":
+			return ports.StorageResourcePending
+		}
+	}
+	for _, condition := range kubernetesConditions(status) {
+		conditionType, _ := condition["type"].(string)
+		conditionStatus, _ := condition["status"].(string)
+		if conditionType == "FileSystemResizePending" && conditionStatus == "True" {
+			return ports.StorageResourcePending
+		}
+	}
+	return ports.StorageResourceAvailable
+}
+
+func storageReasonFromKubernetesObject(doc map[string]any) string {
+	status, _ := doc["status"].(map[string]any)
+	for _, condition := range kubernetesConditions(status) {
+		if message, _ := condition["message"].(string); message != "" {
+			return message
+		}
+		if reason, _ := condition["reason"].(string); reason != "" {
+			return reason
+		}
+	}
+	if reason, _ := status["reason"].(string); reason != "" {
+		return reason
+	}
+	if phase, _ := status["phase"].(string); phase != "" {
+		return "observed Kubernetes PVC phase " + phase
+	}
+	return "observed by Kubernetes storage provider"
+}
+
+func kubernetesConditions(status map[string]any) []map[string]any {
+	rawConditions, _ := status["conditions"].([]any)
+	conditions := make([]map[string]any, 0, len(rawConditions))
+	for _, rawCondition := range rawConditions {
+		if condition, ok := rawCondition.(map[string]any); ok {
+			conditions = append(conditions, condition)
+		}
+	}
+	return conditions
 }
 
 func numericStatus(status map[string]any, key string) int64 {

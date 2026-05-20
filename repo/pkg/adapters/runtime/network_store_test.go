@@ -1,0 +1,145 @@
+package runtime
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/kubercloud/ani/pkg/ports"
+)
+
+const networkStoreTenantID = "5dbb1d01-0000-4000-8000-000000000001"
+
+func TestMetadataNetworkStoreUpsertsVPC(t *testing.T) {
+	tx := &fakeMetadataTx{}
+	store := NewMetadataNetworkStore(fakeMetadataStore{tx: tx}, WithNetworkStoreClock(func() time.Time {
+		return time.Unix(100, 0)
+	}))
+
+	err := store.UpsertVPC(context.Background(), ports.NetworkVPCRecord{
+		TenantID:  networkStoreTenantID,
+		VPCID:     "vpc-test",
+		Name:      "vpc-a",
+		CIDR:      "10.30.0.0/16",
+		State:     ports.NetworkResourceAvailable,
+		Reason:    "created",
+		CreatedAt: time.Unix(90, 0),
+	})
+	if err != nil {
+		t.Fatalf("UpsertVPC() error = %v", err)
+	}
+	if !strings.Contains(tx.sql, "INSERT INTO network_vpcs") {
+		t.Fatalf("sql = %q, want network_vpcs insert", tx.sql)
+	}
+	if got, want := tx.args[1], "vpc-test"; got != want {
+		t.Fatalf("vpc_id arg = %v, want %s", got, want)
+	}
+	if got, want := tx.args[4], string(ports.NetworkResourceAvailable); got != want {
+		t.Fatalf("state arg = %v, want %s", got, want)
+	}
+}
+
+func TestMetadataNetworkStoreSerializesNestedNetworkResources(t *testing.T) {
+	tx := &fakeMetadataTx{}
+	store := NewMetadataNetworkStore(fakeMetadataStore{tx: tx}, WithNetworkStoreClock(func() time.Time {
+		return time.Unix(100, 0)
+	}))
+
+	err := store.UpsertSecurityGroup(context.Background(), ports.NetworkSecurityGroupRecord{
+		TenantID:        networkStoreTenantID,
+		SecurityGroupID: "sg-test",
+		Name:            "web-sg",
+		Rules: []ports.NetworkSecurityGroupRule{
+			{Direction: "ingress", Protocol: "tcp", PortRange: "443", CIDR: "0.0.0.0/0", Action: "allow"},
+		},
+		State: ports.NetworkResourceAvailable,
+	})
+	if err != nil {
+		t.Fatalf("UpsertSecurityGroup() error = %v", err)
+	}
+	if !strings.Contains(tx.sql, "INSERT INTO network_security_groups") {
+		t.Fatalf("sql = %q, want network_security_groups insert", tx.sql)
+	}
+	rules, ok := tx.args[4].(string)
+	if !ok || !strings.Contains(rules, `"Protocol":"tcp"`) {
+		t.Fatalf("rules arg = %#v, want serialized rule payload", tx.args[4])
+	}
+
+	err = store.UpsertLoadBalancer(context.Background(), ports.NetworkLoadBalancerRecord{
+		TenantID:       networkStoreTenantID,
+		LoadBalancerID: "lb-test",
+		Name:           "web-lb",
+		VPCID:          "vpc-test",
+		Scheme:         "public",
+		Listeners: []ports.NetworkLoadBalancerListener{
+			{Protocol: "http", Port: 80, TargetPort: 8080},
+		},
+		State: ports.NetworkResourceAvailable,
+	})
+	if err != nil {
+		t.Fatalf("UpsertLoadBalancer() error = %v", err)
+	}
+	if !strings.Contains(tx.sql, "INSERT INTO network_load_balancers") {
+		t.Fatalf("sql = %q, want network_load_balancers insert", tx.sql)
+	}
+	listeners, ok := tx.args[7].(string)
+	if !ok || !strings.Contains(listeners, `"TargetPort":8080`) {
+		t.Fatalf("listeners arg = %#v, want serialized listener payload", tx.args[7])
+	}
+}
+
+func TestLocalNetworkServicePersistsCreateAndDelete(t *testing.T) {
+	tx := &fakeMetadataTx{}
+	service := NewLocalNetworkService(
+		WithNetworkResourceStore(NewMetadataNetworkStore(fakeMetadataStore{tx: tx})),
+	)
+
+	vpc, err := service.CreateVPC(context.Background(), ports.NetworkVPCCreateRequest{
+		TenantID: networkStoreTenantID,
+		Name:     "persisted-vpc",
+	})
+	if err != nil {
+		t.Fatalf("CreateVPC() error = %v", err)
+	}
+	if _, err := service.DeleteVPC(context.Background(), ports.NetworkResourceGetRequest{
+		TenantID:   networkStoreTenantID,
+		ResourceID: vpc.VPCID,
+	}); err != nil {
+		t.Fatalf("DeleteVPC() error = %v", err)
+	}
+	if len(tx.execs) != 2 {
+		t.Fatalf("exec count = %d, want create and delete persistence writes", len(tx.execs))
+	}
+	if got, want := tx.args[4], string(ports.NetworkResourceDeleted); got != want {
+		t.Fatalf("last persisted state = %v, want %s", got, want)
+	}
+}
+
+func TestMetadataNetworkStoreUpdatesResourceState(t *testing.T) {
+	tx := &fakeMetadataTx{}
+	store := NewMetadataNetworkStore(fakeMetadataStore{tx: tx}, WithNetworkStoreClock(func() time.Time {
+		return time.Unix(100, 0)
+	}))
+
+	err := store.UpdateResourceState(context.Background(), ports.NetworkResourceStateUpdateRequest{
+		TenantID:     networkStoreTenantID,
+		ResourceKind: "load-balancer",
+		ResourceID:   "lb-test",
+		State:        ports.NetworkResourceFailed,
+		Reason:       "vip allocation failed",
+		UpdatedAt:    time.Unix(120, 0),
+	})
+	if err != nil {
+		t.Fatalf("UpdateResourceState() error = %v", err)
+	}
+	if !strings.Contains(tx.sql, "UPDATE network_load_balancers") {
+		t.Fatalf("sql = %q, want network_load_balancers update", tx.sql)
+	}
+	if got, want := tx.args[1], "lb-test"; got != want {
+		t.Fatalf("resource id arg = %v, want %s", got, want)
+	}
+	if got, want := tx.args[2], string(ports.NetworkResourceFailed); got != want {
+		t.Fatalf("state arg = %v, want %s", got, want)
+	}
+}

@@ -100,6 +100,7 @@ func podTemplate(spec ports.WorkloadSpec) map[string]any {
 				"image":        spec.Image,
 				"command":      omitEmptySlice(spec.Command),
 				"args":         omitEmptySlice(spec.Args),
+				"env":          workloadIdentityEnv(spec),
 				"resources":    containerResources(spec),
 				"ports":        containerPorts(spec),
 				"volumeMounts": volumeMounts(spec.Storage),
@@ -163,7 +164,47 @@ func annotationsWithInstancePlan(spec ports.WorkloadSpec) map[string]string {
 		"ani.kubercloud.io/render-mode":     "dry-run",
 		"ani.kubercloud.io/runtime-adapter": "planning",
 	}, spec.Annotations)
+	if spec.Identity != nil {
+		annotations["ani.kubercloud.io/workload-identity-key-id"] = spec.Identity.KeyID
+		annotations["ani.kubercloud.io/workload-identity-secret"] = workloadIdentitySecretName(spec)
+	}
 	return annotations
+}
+
+func workloadIdentityEnv(spec ports.WorkloadSpec) []any {
+	if spec.Identity == nil {
+		return nil
+	}
+	secretName := workloadIdentitySecretName(spec)
+	return []any{
+		map[string]any{
+			"name": "ANI_WORKLOAD_TOKEN",
+			"valueFrom": map[string]any{
+				"secretKeyRef": map[string]any{
+					"name": secretName,
+					"key":  "token",
+				},
+			},
+		},
+		map[string]any{
+			"name":  "ANI_WORKLOAD_ID",
+			"value": spec.Identity.InstanceID,
+		},
+	}
+}
+
+func workloadIdentitySecretName(spec ports.WorkloadSpec) string {
+	if spec.Identity == nil {
+		return ""
+	}
+	seed := firstNonEmpty(spec.Identity.KeyID, spec.Identity.InstanceID, spec.Name)
+	seed = strings.ReplaceAll(seed, "_", "-")
+	seed = strings.ReplaceAll(seed, ":", "-")
+	seed = strings.Trim(seed, "-")
+	if len(seed) > 24 {
+		seed = seed[:24]
+	}
+	return "ani-wi-" + seed
 }
 
 func containerResources(spec ports.WorkloadSpec) map[string]any {

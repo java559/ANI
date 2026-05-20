@@ -1,0 +1,137 @@
+{
+  "layer": "services",
+  "title": "KuberCloud ANI Services API",
+  "version": "1.0.0",
+  "serverURL": "https://{host}/api/v1/svc",
+  "operations": [
+    {
+      "operationId": "listInferenceServices",
+      "method": "GET",
+      "path": "/inference-services",
+      "scope": ""
+    },
+    {
+      "operationId": "createInferenceService",
+      "method": "POST",
+      "path": "/inference-services",
+      "scope": ""
+    },
+    {
+      "operationId": "deleteInferenceService",
+      "method": "DELETE",
+      "path": "/inference-services/{service_id}",
+      "scope": ""
+    },
+    {
+      "operationId": "getInferenceService",
+      "method": "GET",
+      "path": "/inference-services/{service_id}",
+      "scope": ""
+    },
+    {
+      "operationId": "listKnowledgeBases",
+      "method": "GET",
+      "path": "/knowledge-bases",
+      "scope": ""
+    },
+    {
+      "operationId": "createKnowledgeBase",
+      "method": "POST",
+      "path": "/knowledge-bases",
+      "scope": ""
+    },
+    {
+      "operationId": "deleteKnowledgeBase",
+      "method": "DELETE",
+      "path": "/knowledge-bases/{kb_id}",
+      "scope": ""
+    },
+    {
+      "operationId": "getKnowledgeBase",
+      "method": "GET",
+      "path": "/knowledge-bases/{kb_id}",
+      "scope": ""
+    },
+    {
+      "operationId": "listKnowledgeBaseDocuments",
+      "method": "GET",
+      "path": "/knowledge-bases/{kb_id}/documents",
+      "scope": ""
+    },
+    {
+      "operationId": "uploadKnowledgeBaseDocument",
+      "method": "POST",
+      "path": "/knowledge-bases/{kb_id}/documents",
+      "scope": ""
+    },
+    {
+      "operationId": "deleteKnowledgeBaseDocument",
+      "method": "DELETE",
+      "path": "/knowledge-bases/{kb_id}/documents/{doc_id}",
+      "scope": ""
+    },
+    {
+      "operationId": "queryKnowledgeBase",
+      "method": "POST",
+      "path": "/knowledge-bases/{kb_id}/query",
+      "scope": ""
+    },
+    {
+      "operationId": "streamQueryKnowledgeBase",
+      "method": "GET",
+      "path": "/knowledge-bases/{kb_id}/query/stream",
+      "scope": ""
+    },
+    {
+      "operationId": "listModels",
+      "method": "GET",
+      "path": "/models",
+      "scope": ""
+    },
+    {
+      "operationId": "createModel",
+      "method": "POST",
+      "path": "/models",
+      "scope": ""
+    },
+    {
+      "operationId": "importModel",
+      "method": "POST",
+      "path": "/models/import",
+      "scope": ""
+    },
+    {
+      "operationId": "deleteModel",
+      "method": "DELETE",
+      "path": "/models/{model_id}",
+      "scope": ""
+    },
+    {
+      "operationId": "getModel",
+      "method": "GET",
+      "path": "/models/{model_id}",
+      "scope": ""
+    },
+    {
+      "operationId": "createModelVersion",
+      "method": "POST",
+      "path": "/models/{model_id}/versions",
+      "scope": ""
+    }
+  ],
+  "schemas": [
+    "AsyncTask",
+    "CreateInferenceEndpointRequest",
+    "CreateModelRequest",
+    "CursorPage",
+    "ErrorResponse",
+    "InferenceEndpoint",
+    "InferenceService",
+    "KBDocument",
+    "KBQueryRequest",
+    "KBQueryResponse",
+    "KnowledgeBase",
+    "Model",
+    "ModelVersion"
+  ]
+}

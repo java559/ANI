@@ -153,6 +153,203 @@ func TestKubernetesRESTClientSupportsKubeVirtVirtualMachine(t *testing.T) {
 	}
 }
 
+func TestKubernetesRESTClientSupportsKubeOVNNetworkResources(t *testing.T) {
+	var paths []string
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		paths = append(paths, r.URL.String())
+		return jsonResponse(http.StatusOK, `{"kind":"accepted"}`), nil
+	})
+
+	client := newTestKubernetesRESTClient(t, transport)
+	manifests, err := NewKubeOVNNetworkRenderer().RenderVPC(context.Background(), ports.NetworkVPCRecord{
+		TenantID: "tenant-a",
+		VPCID:    "vpc-main",
+		Name:     "main",
+		CIDR:     "10.40.0.0/16",
+		State:    ports.NetworkResourceAvailable,
+	})
+	if err != nil {
+		t.Fatalf("RenderVPC() error = %v", err)
+	}
+	if _, err := client.ServerSideDryRun(context.Background(), manifests); err != nil {
+		t.Fatalf("ServerSideDryRun(Vpc) error = %v", err)
+	}
+	if _, err := client.ApplyManifests(context.Background(), manifests); err != nil {
+		t.Fatalf("ApplyManifests(Vpc) error = %v", err)
+	}
+	if len(paths) != 2 {
+		t.Fatalf("paths = %#v, want dry-run and apply calls", paths)
+	}
+	if !strings.Contains(paths[0], "/apis/kubeovn.io/v1/vpcs?dryRun=All") {
+		t.Fatalf("dry-run path = %q, want KubeOVN Vpc collection", paths[0])
+	}
+	if !strings.Contains(paths[1], "/apis/kubeovn.io/v1/vpcs/vpc-vpc-main") {
+		t.Fatalf("apply path = %q, want KubeOVN Vpc resource", paths[1])
+	}
+}
+
+func TestKubernetesRESTClientObservesKubeOVNNetworkResourceStatus(t *testing.T) {
+	var gotPath string
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotPath = r.URL.String()
+		if r.Method != http.MethodGet {
+			t.Fatalf("method = %s, want GET", r.Method)
+		}
+		return jsonResponse(http.StatusOK, `{"kind":"Vpc","status":{"conditions":[{"type":"Ready","status":"True"}]}}`), nil
+	})
+
+	client := newTestKubernetesRESTClient(t, transport)
+	result, err := client.ObserveNetworkResource(context.Background(), ports.NetworkProviderStatusRequest{
+		TenantID:     "tenant-a",
+		ResourceKind: "vpc",
+		ResourceID:   "vpc-main",
+		ApplyResult: ports.NetworkProviderApplyResult{
+			Applied:      true,
+			Provider:     "kubeovn",
+			ResourceRefs: []string{"kubeovn/Vpc/vpc-vpc-main"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ObserveNetworkResource() error = %v", err)
+	}
+	if result.State != ports.NetworkResourceAvailable {
+		t.Fatalf("State = %q, want available", result.State)
+	}
+	if !strings.Contains(gotPath, "/apis/kubeovn.io/v1/vpcs/vpc-vpc-main") {
+		t.Fatalf("path = %q, want KubeOVN Vpc resource path", gotPath)
+	}
+}
+
+func TestKubernetesRESTClientMapsNetworkResourceFailure(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{"kind":"Service","status":{"conditions":[{"type":"Available","status":"False","reason":"NoVIP","message":"load balancer vip is not allocated"}]}}`), nil
+	})
+
+	client := newTestKubernetesRESTClient(t, transport)
+	result, err := client.ObserveNetworkResource(context.Background(), ports.NetworkProviderStatusRequest{
+		TenantID:     "tenant-a",
+		ResourceKind: "load-balancer",
+		ResourceID:   "lb-web",
+		ApplyResult: ports.NetworkProviderApplyResult{
+			Applied:      true,
+			Provider:     "kubernetes",
+			ResourceRefs: []string{"kubernetes/Service/lb-lb-web"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ObserveNetworkResource() error = %v", err)
+	}
+	if result.State != ports.NetworkResourceFailed {
+		t.Fatalf("State = %q, want failed", result.State)
+	}
+	if result.Reason != "load balancer vip is not allocated" {
+		t.Fatalf("Reason = %q, want condition message", result.Reason)
+	}
+}
+
+func TestKubernetesRESTClientObservesStoragePVCStatus(t *testing.T) {
+	var gotPath string
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotPath = r.URL.String()
+		if r.Method != http.MethodGet {
+			t.Fatalf("method = %s, want GET", r.Method)
+		}
+		return jsonResponse(http.StatusOK, `{"kind":"PersistentVolumeClaim","status":{"phase":"Bound"}}`), nil
+	})
+
+	client := newTestKubernetesRESTClient(t, transport)
+	result, err := client.ObserveStorageResource(context.Background(), ports.StorageProviderStatusRequest{
+		TenantID:     "tenant-a",
+		ResourceKind: "volume",
+		ResourceID:   "vol-data",
+		ApplyResult: ports.StorageProviderApplyResult{
+			Applied:      true,
+			Provider:     "kubernetes",
+			ResourceRefs: []string{"kubernetes/PersistentVolumeClaim/vol-vol-data"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ObserveStorageResource() error = %v", err)
+	}
+	if result.State != ports.StorageResourceAvailable {
+		t.Fatalf("State = %q, want available", result.State)
+	}
+	if !strings.Contains(gotPath, "/api/v1/namespaces/ani-tenant-tenant-a/persistentvolumeclaims/vol-vol-data") {
+		t.Fatalf("path = %q, want PVC resource path", gotPath)
+	}
+}
+
+func TestKubernetesRESTClientMapsStoragePVCFailure(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{"kind":"PersistentVolumeClaim","status":{"phase":"Lost","reason":"VolumeLost"}}`), nil
+	})
+
+	client := newTestKubernetesRESTClient(t, transport)
+	result, err := client.ObserveStorageResource(context.Background(), ports.StorageProviderStatusRequest{
+		TenantID:     "tenant-a",
+		ResourceKind: "volume",
+		ResourceID:   "vol-data",
+		ApplyResult: ports.StorageProviderApplyResult{
+			Applied:      true,
+			Provider:     "kubernetes",
+			ResourceRefs: []string{"kubernetes/PersistentVolumeClaim/vol-vol-data"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ObserveStorageResource() error = %v", err)
+	}
+	if result.State != ports.StorageResourceFailed {
+		t.Fatalf("State = %q, want failed", result.State)
+	}
+	if result.Reason != "VolumeLost" {
+		t.Fatalf("Reason = %q, want PVC reason", result.Reason)
+	}
+}
+
+func TestKubernetesRESTClientSupportsNetworkPolicyAndService(t *testing.T) {
+	var paths []string
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		paths = append(paths, r.URL.String())
+		return jsonResponse(http.StatusOK, `{"kind":"accepted"}`), nil
+	})
+
+	client := newTestKubernetesRESTClient(t, transport)
+	sg, err := NewKubeOVNNetworkRenderer().RenderSecurityGroup(context.Background(), ports.NetworkSecurityGroupRecord{
+		TenantID:        "tenant-a",
+		SecurityGroupID: "sg-web",
+		Name:            "web",
+		State:           ports.NetworkResourceAvailable,
+	})
+	if err != nil {
+		t.Fatalf("RenderSecurityGroup() error = %v", err)
+	}
+	lb, err := NewKubeOVNNetworkRenderer().RenderLoadBalancer(context.Background(), ports.NetworkLoadBalancerRecord{
+		TenantID:       "tenant-a",
+		LoadBalancerID: "lb-web",
+		Name:           "web",
+		VPCID:          "vpc-main",
+		Scheme:         "public",
+		State:          ports.NetworkResourceAvailable,
+		Listeners:      []ports.NetworkLoadBalancerListener{{Protocol: "http", Port: 80}},
+	})
+	if err != nil {
+		t.Fatalf("RenderLoadBalancer() error = %v", err)
+	}
+	manifests := append(sg, lb...)
+	if _, err := client.ServerSideDryRun(context.Background(), manifests); err != nil {
+		t.Fatalf("ServerSideDryRun(network manifests) error = %v", err)
+	}
+	if len(paths) != 2 {
+		t.Fatalf("paths = %#v, want two dry-run calls", paths)
+	}
+	if !strings.Contains(paths[0], "/apis/networking.k8s.io/v1/namespaces/ani-tenant-tenant-a/networkpolicies") {
+		t.Fatalf("network policy path = %q", paths[0])
+	}
+	if !strings.Contains(paths[1], "/api/v1/namespaces/ani-tenant-tenant-a/services") {
+		t.Fatalf("service path = %q", paths[1])
+	}
+}
+
 func newTestKubernetesRESTClient(t *testing.T, transport http.RoundTripper) *KubernetesRESTClient {
 	t.Helper()
 	client, err := NewKubernetesRESTClient(KubernetesRESTClientConfig{

@@ -107,8 +107,29 @@ func validateProviderDryRunDocument(provider string, doc map[string]any) error {
 			if apiVersion != "batch/v1" {
 				return fmt.Errorf("kubernetes Job requires batch/v1")
 			}
+		case "NetworkPolicy":
+			if apiVersion != "networking.k8s.io/v1" {
+				return fmt.Errorf("kubernetes NetworkPolicy requires networking.k8s.io/v1")
+			}
+		case "Service":
+			if apiVersion != "v1" {
+				return fmt.Errorf("kubernetes Service requires v1")
+			}
+		case "PersistentVolumeClaim":
+			if apiVersion != "v1" {
+				return fmt.Errorf("kubernetes PersistentVolumeClaim requires v1")
+			}
 		default:
 			return fmt.Errorf("kubernetes provider does not allow kind %q", kind)
+		}
+	case "kubeovn":
+		switch kind {
+		case "Vpc", "Subnet":
+			if apiVersion != "kubeovn.io/v1" {
+				return fmt.Errorf("kubeovn %s requires kubeovn.io/v1", kind)
+			}
+		default:
+			return fmt.Errorf("kubeovn provider does not allow kind %q", kind)
 		}
 	default:
 		return fmt.Errorf("provider %q is not configured for dry-run", provider)

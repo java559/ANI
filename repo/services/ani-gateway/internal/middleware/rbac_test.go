@@ -10,9 +10,9 @@ func TestInferPermission(t *testing.T) {
 		wantAction   string
 	}{
 		{method: "GET", path: "/api/v1/tasks/task-1", wantResource: "tasks", wantAction: "get"},
-		{method: "POST", path: "/api/v1/models", wantResource: "models", wantAction: "create"},
+		{method: "POST", path: "/api/v1/svc/models", wantResource: "models", wantAction: "create"},
 		{method: "PATCH", path: "/api/v1/kb/kb-1", wantResource: "kb", wantAction: "update"},
-		{method: "DELETE", path: "/api/v1/models/model-1", wantResource: "models", wantAction: "delete"},
+		{method: "DELETE", path: "/api/v1/svc/models/model-1", wantResource: "models", wantAction: "delete"},
 	}
 
 	for _, tt := range tests {

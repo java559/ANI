@@ -1,0 +1,381 @@
+{
+  "layer": "core",
+  "title": "KuberCloud ANI Core API",
+  "version": "1.0.0",
+  "serverURL": "https://{host}/api/v1",
+  "operations": [
+    {
+      "operationId": "listAPIKeys",
+      "method": "GET",
+      "path": "/auth/api-keys",
+      "scope": ""
+    },
+    {
+      "operationId": "createAPIKey",
+      "method": "POST",
+      "path": "/auth/api-keys",
+      "scope": ""
+    },
+    {
+      "operationId": "revokeAPIKey",
+      "method": "DELETE",
+      "path": "/auth/api-keys/{key_id}",
+      "scope": ""
+    },
+    {
+      "operationId": "logout",
+      "method": "POST",
+      "path": "/auth/logout",
+      "scope": ""
+    },
+    {
+      "operationId": "beginOIDCLogin",
+      "method": "POST",
+      "path": "/auth/oidc/begin",
+      "scope": ""
+    },
+    {
+      "operationId": "postAuthRefresh",
+      "method": "POST",
+      "path": "/auth/refresh",
+      "scope": ""
+    },
+    {
+      "operationId": "completeOIDCLogin",
+      "method": "POST",
+      "path": "/auth/token",
+      "scope": ""
+    },
+    {
+      "operationId": "getBranding",
+      "method": "GET",
+      "path": "/branding",
+      "scope": ""
+    },
+    {
+      "operationId": "listStorageFilesystems",
+      "method": "GET",
+      "path": "/filesystems",
+      "scope": "scope:filesystems:read"
+    },
+    {
+      "operationId": "createStorageFilesystem",
+      "method": "POST",
+      "path": "/filesystems",
+      "scope": "scope:filesystems:create"
+    },
+    {
+      "operationId": "deleteStorageFilesystem",
+      "method": "DELETE",
+      "path": "/filesystems/{filesystem_id}",
+      "scope": "scope:filesystems:delete"
+    },
+    {
+      "operationId": "getStorageFilesystem",
+      "method": "GET",
+      "path": "/filesystems/{filesystem_id}",
+      "scope": "scope:filesystems:read"
+    },
+    {
+      "operationId": "liveness",
+      "method": "GET",
+      "path": "/healthz",
+      "scope": ""
+    },
+    {
+      "operationId": "getInstanceOperation",
+      "method": "GET",
+      "path": "/instance-operations/{operation_id}",
+      "scope": "scope:instances:read"
+    },
+    {
+      "operationId": "listInstances",
+      "method": "GET",
+      "path": "/instances",
+      "scope": "scope:instances:read"
+    },
+    {
+      "operationId": "createInstance",
+      "method": "POST",
+      "path": "/instances",
+      "scope": "scope:instances:create"
+    },
+    {
+      "operationId": "getInstance",
+      "method": "GET",
+      "path": "/instances/{instance_id}",
+      "scope": "scope:instances:read"
+    },
+    {
+      "operationId": "createInstanceConsoleSession",
+      "method": "POST",
+      "path": "/instances/{instance_id}/console",
+      "scope": "scope:instances:console"
+    },
+    {
+      "operationId": "applyInstanceLifecycle",
+      "method": "POST",
+      "path": "/instances/{instance_id}/lifecycle",
+      "scope": "scope:instances:update"
+    },
+    {
+      "operationId": "listInstanceOperations",
+      "method": "GET",
+      "path": "/instances/{instance_id}/operations",
+      "scope": "scope:instances:read"
+    },
+    {
+      "operationId": "getMeteringUsage",
+      "method": "GET",
+      "path": "/metering/usage",
+      "scope": ""
+    },
+    {
+      "operationId": "listNetworkLoadBalancers",
+      "method": "GET",
+      "path": "/networks/load-balancers",
+      "scope": "scope:networks:read"
+    },
+    {
+      "operationId": "createNetworkLoadBalancer",
+      "method": "POST",
+      "path": "/networks/load-balancers",
+      "scope": "scope:networks:create"
+    },
+    {
+      "operationId": "deleteNetworkLoadBalancer",
+      "method": "DELETE",
+      "path": "/networks/load-balancers/{load_balancer_id}",
+      "scope": "scope:networks:delete"
+    },
+    {
+      "operationId": "getNetworkLoadBalancer",
+      "method": "GET",
+      "path": "/networks/load-balancers/{load_balancer_id}",
+      "scope": "scope:networks:read"
+    },
+    {
+      "operationId": "listNetworkSecurityGroups",
+      "method": "GET",
+      "path": "/networks/security-groups",
+      "scope": "scope:networks:read"
+    },
+    {
+      "operationId": "createNetworkSecurityGroup",
+      "method": "POST",
+      "path": "/networks/security-groups",
+      "scope": "scope:networks:create"
+    },
+    {
+      "operationId": "deleteNetworkSecurityGroup",
+      "method": "DELETE",
+      "path": "/networks/security-groups/{security_group_id}",
+      "scope": "scope:networks:delete"
+    },
+    {
+      "operationId": "getNetworkSecurityGroup",
+      "method": "GET",
+      "path": "/networks/security-groups/{security_group_id}",
+      "scope": "scope:networks:read"
+    },
+    {
+      "operationId": "listNetworkSubnets",
+      "method": "GET",
+      "path": "/networks/subnets",
+      "scope": "scope:networks:read"
+    },
+    {
+      "operationId": "createNetworkSubnet",
+      "method": "POST",
+      "path": "/networks/subnets",
+      "scope": "scope:networks:create"
+    },
+    {
+      "operationId": "deleteNetworkSubnet",
+      "method": "DELETE",
+      "path": "/networks/subnets/{subnet_id}",
+      "scope": "scope:networks:delete"
+    },
+    {
+      "operationId": "getNetworkSubnet",
+      "method": "GET",
+      "path": "/networks/subnets/{subnet_id}",
+      "scope": "scope:networks:read"
+    },
+    {
+      "operationId": "listNetworkVPCs",
+      "method": "GET",
+      "path": "/networks/vpcs",
+      "scope": "scope:networks:read"
+    },
+    {
+      "operationId": "createNetworkVPC",
+      "method": "POST",
+      "path": "/networks/vpcs",
+      "scope": "scope:networks:create"
+    },
+    {
+      "operationId": "deleteNetworkVPC",
+      "method": "DELETE",
+      "path": "/networks/vpcs/{vpc_id}",
+      "scope": "scope:networks:delete"
+    },
+    {
+      "operationId": "getNetworkVPC",
+      "method": "GET",
+      "path": "/networks/vpcs/{vpc_id}",
+      "scope": "scope:networks:read"
+    },
+    {
+      "operationId": "listStorageObjects",
+      "method": "GET",
+      "path": "/objects",
+      "scope": "scope:objects:read"
+    },
+    {
+      "operationId": "createStorageObject",
+      "method": "POST",
+      "path": "/objects",
+      "scope": "scope:objects:create"
+    },
+    {
+      "operationId": "deleteStorageObject",
+      "method": "DELETE",
+      "path": "/objects/{object_id}",
+      "scope": "scope:objects:delete"
+    },
+    {
+      "operationId": "getStorageObject",
+      "method": "GET",
+      "path": "/objects/{object_id}",
+      "scope": "scope:objects:read"
+    },
+    {
+      "operationId": "readiness",
+      "method": "GET",
+      "path": "/readyz",
+      "scope": ""
+    },
+    {
+      "operationId": "getTasksTaskId",
+      "method": "GET",
+      "path": "/tasks/{task_id}",
+      "scope": ""
+    },
+    {
+      "operationId": "listVectorStores",
+      "method": "GET",
+      "path": "/vector-stores",
+      "scope": "scope:vector-stores:read"
+    },
+    {
+      "operationId": "createVectorStore",
+      "method": "POST",
+      "path": "/vector-stores",
+      "scope": "scope:vector-stores:create"
+    },
+    {
+      "operationId": "deleteVectorStore",
+      "method": "DELETE",
+      "path": "/vector-stores/{vector_store_id}",
+      "scope": "scope:vector-stores:delete"
+    },
+    {
+      "operationId": "getVectorStore",
+      "method": "GET",
+      "path": "/vector-stores/{vector_store_id}",
+      "scope": "scope:vector-stores:read"
+    },
+    {
+      "operationId": "searchVectorStore",
+      "method": "POST",
+      "path": "/vector-stores/{vector_store_id}/search",
+      "scope": "scope:vector-stores:search"
+    },
+    {
+      "operationId": "listStorageVolumes",
+      "method": "GET",
+      "path": "/volumes",
+      "scope": "scope:volumes:read"
+    },
+    {
+      "operationId": "createStorageVolume",
+      "method": "POST",
+      "path": "/volumes",
+      "scope": "scope:volumes:create"
+    },
+    {
+      "operationId": "deleteStorageVolume",
+      "method": "DELETE",
+      "path": "/volumes/{volume_id}",
+      "scope": "scope:volumes:delete"
+    },
+    {
+      "operationId": "getStorageVolume",
+      "method": "GET",
+      "path": "/volumes/{volume_id}",
+      "scope": "scope:volumes:read"
+    }
+  ],
+  "schemas": [
+    "APIKeyInfo",
+    "AsyncTask",
+    "BeginOIDCLoginRequest",
+    "BeginOIDCLoginResponse",
+    "CompleteOIDCLoginRequest",
+    "CoreDevProfileInfo",
+    "CreateAPIKeyRequest",
+    "CreateAPIKeyResponse",
+    "CreateInstanceConsoleSessionRequest",
+    "CreateInstanceRequest",
+    "CreateInstanceResponse",
+    "CreateNetworkLoadBalancerRequest",
+    "CreateNetworkSecurityGroupRequest",
+    "CreateNetworkSubnetRequest",
+    "CreateNetworkVPCRequest",
+    "CreateStorageFilesystemRequest",
+    "CreateStorageObjectRequest",
+    "CreateStorageVolumeRequest",
+    "CreateVectorStoreRequest",
+    "CursorPage",
+    "ErrorResponse",
+    "HealthCheck",
+    "InstanceConsoleSession",
+    "InstanceLifecycleRequest",
+    "InstanceLifecycleResponse",
+    "InstanceListResponse",
+    "InstanceOperation",
+    "InstanceRecord",
+    "ListAPIKeysResponse",
+    "LogoutRequest",
+    "NetworkLoadBalancer",
+    "NetworkLoadBalancerListResponse",
+    "NetworkLoadBalancerListener",
+    "NetworkResourceState",
+    "NetworkSecurityGroup",
+    "NetworkSecurityGroupListResponse",
+    "NetworkSecurityGroupRule",
+    "NetworkSubnet",
+    "NetworkSubnetListResponse",
+    "NetworkVPC",
+    "NetworkVPCListResponse",
+    "RefreshAccessTokenRequest",
+    "RefreshAccessTokenResponse",
+    "RevokeStatusResponse",
+    "StorageFilesystem",
+    "StorageFilesystemListResponse",
+    "StorageObject",
+    "StorageObjectListResponse",
+    "StorageResourceState",
+    "StorageVolume",
+    "StorageVolumeListResponse",
+    "TokenPairResponse",
+    "VectorStore",
+    "VectorStoreListResponse",
+    "VectorStoreSearchHit",
+    "VectorStoreSearchRequest",
+    "VectorStoreSearchResponse",
+    "VectorStoreState",
+    "WorkloadIdentityBinding"
+  ]
+}

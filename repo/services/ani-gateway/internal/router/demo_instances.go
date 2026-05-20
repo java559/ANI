@@ -129,24 +129,26 @@ type demoShellExecResponse struct {
 }
 
 type demoInstanceResponse struct {
-	ID                    string           `json:"id"`
-	TenantID              string           `json:"tenant_id"`
-	Name                  string           `json:"name"`
-	Kind                  string           `json:"kind"`
-	State                 string           `json:"state"`
-	Status                string           `json:"status"`
-	Provider              string           `json:"provider"`
-	OperationID           string           `json:"operation_id,omitempty"`
-	ResourceRefs          []string         `json:"resource_refs"`
-	Endpoint              string           `json:"endpoint"`
-	TerminationProtection bool             `json:"termination_protection"`
-	SSH                   *demoSSHResponse `json:"ssh,omitempty"`
-	Volumes               []demoVolume     `json:"volumes,omitempty"`
-	Snapshots             []demoSnapshot   `json:"snapshots,omitempty"`
-	Container             *demoContainer   `json:"container,omitempty"`
-	GPU                   *demoGPU         `json:"gpu,omitempty"`
-	CreatedAt             string           `json:"created_at"`
-	UpdatedAt             string           `json:"updated_at"`
+	ID                    string                 `json:"id"`
+	TenantID              string                 `json:"tenant_id"`
+	Name                  string                 `json:"name"`
+	Kind                  string                 `json:"kind"`
+	State                 string                 `json:"state"`
+	Status                string                 `json:"status"`
+	Provider              string                 `json:"provider"`
+	DevProfile            coreDevProfileResponse `json:"dev_profile"`
+	OperationID           string                 `json:"operation_id,omitempty"`
+	ResourceRefs          []string               `json:"resource_refs"`
+	Endpoint              string                 `json:"endpoint"`
+	TerminationProtection bool                   `json:"termination_protection"`
+	SSH                   *demoSSHResponse       `json:"ssh,omitempty"`
+	Volumes               []demoVolume           `json:"volumes,omitempty"`
+	Snapshots             []demoSnapshot         `json:"snapshots,omitempty"`
+	Container             *demoContainer         `json:"container,omitempty"`
+	GPU                   *demoGPU               `json:"gpu,omitempty"`
+	WorkloadIdentity      *demoIdentity          `json:"workload_identity,omitempty"`
+	CreatedAt             string                 `json:"created_at"`
+	UpdatedAt             string                 `json:"updated_at"`
 }
 
 type demoSSHResponse struct {
@@ -199,6 +201,15 @@ type demoGPU struct {
 	UtilizationPercent float64 `json:"utilization_percent"`
 }
 
+type demoIdentity struct {
+	KeyID     string   `json:"key_id,omitempty"`
+	KeyPrefix string   `json:"key_prefix,omitempty"`
+	Scopes    []string `json:"scopes,omitempty"`
+	Active    bool     `json:"active"`
+	CreatedAt string   `json:"created_at,omitempty"`
+	RevokedAt string   `json:"revoked_at,omitempty"`
+}
+
 type demoInstanceCreateResponse struct {
 	Instance    demoInstanceResponse `json:"instance"`
 	OperationID string               `json:"operation_id"`
@@ -245,6 +256,7 @@ type demoTimelineStep struct {
 func newDemoInstanceAPI() *demoInstanceAPI {
 	store := newDemoInstanceStore()
 	operations := runtimeadapter.NewLocalOperationStore()
+	identity := runtimeadapter.NewLocalWorkloadIdentityService()
 	planner := runtimeadapter.NewPlanningRuntime(runtimeadapter.WithGPUInventory(demoGPUInventory{}))
 	orchestrator := runtimeadapter.NewLocalInstanceOrchestrator(
 		planner,
@@ -256,12 +268,14 @@ func newDemoInstanceAPI() *demoInstanceAPI {
 		runtimeadapter.NewLocalProviderStatusReader(),
 		runtimeadapter.NewLocalStatusReconciler(),
 		runtimeadapter.WithInstanceStore(store),
+		runtimeadapter.WithInstanceOrchestratorWorkloadIdentityService(identity),
 	)
 	service := runtimeadapter.NewLocalInstanceServiceWithOptions(
 		orchestrator,
 		store,
 		runtimeadapter.NewLocalInstanceOpsGuard(runtimeadapter.WithInstanceOpsEnabled(true)),
 		runtimeadapter.WithOperationStore(operations),
+		runtimeadapter.WithWorkloadIdentityService(identity),
 	)
 	return &demoInstanceAPI{service: service, operations: operations}
 }
@@ -721,6 +735,7 @@ func demoInstanceFromRecord(record ports.WorkloadInstanceRecord) demoInstanceRes
 		State:                 string(record.Status.State),
 		Status:                string(record.Status.State),
 		Provider:              record.Provider,
+		DevProfile:            localCoreDevProfile("local-instance-service", "Core dev/local profile; provider execution is gated separately"),
 		OperationID:           record.OperationID,
 		ResourceRefs:          record.ResourceRefs,
 		Endpoint:              record.Status.Endpoint,
@@ -730,6 +745,7 @@ func demoInstanceFromRecord(record ports.WorkloadInstanceRecord) demoInstanceRes
 		Snapshots:             demoSnapshotsFromRecord(record),
 		Container:             demoContainerFromRecord(record),
 		GPU:                   demoGPUFromRecord(record),
+		WorkloadIdentity:      demoIdentityFromRecord(record),
 		CreatedAt:             record.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:             record.UpdatedAt.Format(time.RFC3339),
 	}
@@ -799,6 +815,25 @@ func demoGPUFromRecord(record ports.WorkloadInstanceRecord) *demoGPU {
 		SchedulingReason:   record.GPU.SchedulingReason,
 		UtilizationPercent: record.GPU.UtilizationPercent,
 	}
+}
+
+func demoIdentityFromRecord(record ports.WorkloadInstanceRecord) *demoIdentity {
+	if record.Identity == nil {
+		return nil
+	}
+	identity := &demoIdentity{
+		KeyID:     record.Identity.KeyID,
+		KeyPrefix: record.Identity.KeyPrefix,
+		Scopes:    append([]string(nil), record.Identity.Scopes...),
+		Active:    record.Identity.Active,
+	}
+	if !record.Identity.CreatedAt.IsZero() {
+		identity.CreatedAt = record.Identity.CreatedAt.Format(time.RFC3339)
+	}
+	if !record.Identity.RevokedAt.IsZero() {
+		identity.RevokedAt = record.Identity.RevokedAt.Format(time.RFC3339)
+	}
+	return identity
 }
 
 func demoSnapshotsFromRecord(record ports.WorkloadInstanceRecord) []demoSnapshot {
