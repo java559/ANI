@@ -34,14 +34,9 @@
 /repo/services/ani-services.html                        @e92nf872rp @viccao-yue
 
 # ── Services 业务 handler（Services 主审 + Core 兜底）────────────────────────
-# 这些文件是 Services 团队在 ani-gateway 内实现的业务路由 handler
-# 列在 ani-gateway/ 的宽规则之后，更精确的规则覆盖上面的宽规则
-/repo/services/ani-gateway/internal/router/model_resources.go         @viccao-yue @e92nf872rp
-/repo/services/ani-gateway/internal/router/inference_resources.go     @viccao-yue @e92nf872rp
-/repo/services/ani-gateway/internal/router/kb_resources.go            @viccao-yue @e92nf872rp
-/repo/services/ani-gateway/internal/router/gpu_container_resources.go @viccao-yue @e92nf872rp
-/repo/services/ani-gateway/internal/router/sandbox_resources.go       @viccao-yue @e92nf872rp
-/repo/services/ani-gateway/internal/router/tenant_resources.go        @viccao-yue @e92nf872rp
+# 通配符覆盖 router/ 下所有 *_resources.go（含未来新增文件）
+# 这样 viccao-yue 新建 batch_resources.go 等文件时，规则自动生效
+/repo/services/ani-gateway/internal/router/*_resources.go             @viccao-yue @e92nf872rp
 
 # ── Services 旧骨架（冻结只读，双人共同审核防止误改）──────────────────────────
 /repo/services/model-service/                           @viccao-yue @e92nf872rp
