@@ -1,6 +1,6 @@
 # KuberCloud ANI · 文档导航与一致性矩阵
 
-> 最后更新：2026-06-17
+> 最后更新：2026-06-19
 > 目的：让人类开发者和 AI 工具在 5 分钟内判断当前开发阶段、文档职责、下一步入口和闭环规则。
 
 ---
@@ -8,15 +8,18 @@
 ## 当前结论
 
 ```text
-当前阶段：Phase 1 / Sprint 11 / Core Real Deployment Validation 正式部署完成
+当前阶段：Phase 1 / Sprint 12 / Core「Services 支撑 Handler」实现中
 当前不是 Phase 2：Phase 2 指 2026-10 以后延期能力
 当前入口：repo/CURRENT-SPRINT.md
+当前执行：A SPRINT12-KICKOFF-A 已完成；B1 CORE-SVC-SUPPORT-OBSERVABILITY-A 已完成；B2 CORE-SVC-SUPPORT-NETSTORE-A 与 B3 CORE-SVC-SUPPORT-OBJVEC-A 待执行
+代码边界：Sprint 12 状态必须关联 api/openapi/v1.yaml operationId、pkg/ports、pkg/adapters 与 services/ani-gateway/internal/router handler
+Sprint 13 准备：真实 provider / live gate 计划见 repo/development-records/sprint13-real-provider-readiness-plan.md；未跑通 live gate 前不得标 runtime/production ready
 真实底座门禁：REAL-K8S-LAB-A / make validate-real-k8s-profile；Sprint 5 八个 live gate（网络/VM/vCluster/upgrade/Secret/HA/KMS-SM4/GPU-CAPK）已归档 evidence
-真实底座状态：真实服务器只读验证已完成；Rook-Ceph 正式部署已完成（CephCluster Ready/HEALTH_OK，5 SSD OSD，ani-rbd-ssd StorageClass 上线）；Sprint 11 执行环境：正式部署执行环境；RBD smoke test 与逐节点 reboot resilience 已通过
+真实底座状态：Sprint 11 真实服务器只读验证与 Rook-Ceph 正式部署已闭环并转历史回归门禁（CephCluster Ready/HEALTH_OK，5 SSD OSD，ani-rbd-ssd StorageClass 上线）；RBD smoke test 与逐节点 reboot resilience 已通过
 不是实际 v1.0.0 发布；backup/restore 演练、故障注入、soak 及破坏性磁盘操作须单独审批
 ```
 
-Sprint 6-10 完成 contract/local/release-prep scaffold（installer、offline、CLI、RC readiness 均为 contract/local validation，非真实发布）；Sprint 11 为首次真实物理服务器验证阶段，包含 Rook-Ceph VM 优先块存储 live 部署。历史 Sprint 4 回归门禁（`SPEC-SPLIT-A`、`SPEC-CORE-BETA`、`SPEC-COMPAT-A`、`MOCK-A`、`DOC-API-A`、`SDK-BETA-*`、`SDK-MOCK-SMOKE-*`、`SPRINT4-CLOSURE-A`）有效。详细技术边界与验收命令见 [`repo/CURRENT-SPRINT.md`](repo/CURRENT-SPRINT.md)，已完成批次见 [`repo/development-records/README.md`](repo/development-records/README.md)。当前活跃冲刺为 **Sprint 12 / Core「Services 支撑 Handler」实现**（基于真实代码与 `api/openapi/v1.yaml` GAP，闭合 19 个 Core handler 缺口 + 2 个 422，仅 ANI Core，Tier1 local profile）；Sprint 11 已闭环转历史回归门禁。GAP 与触发方式见 [`repo/development-records/sprint12-kickoff-core-svc-support.md`](repo/development-records/sprint12-kickoff-core-svc-support.md)。
+Sprint 6-10 完成 contract/local/release-prep scaffold（installer、offline、CLI、RC readiness 均为 contract/local validation，非真实发布）；Sprint 11 为首次真实物理服务器验证阶段，包含 Rook-Ceph VM 优先块存储 live 部署，现已转为历史回归门禁。历史 Sprint 4 回归门禁（`SPEC-SPLIT-A`、`SPEC-CORE-BETA`、`SPEC-COMPAT-A`、`MOCK-A`、`DOC-API-A`、`SDK-BETA-*`、`SDK-MOCK-SMOKE-*`、`SPRINT4-CLOSURE-A`）有效。详细技术边界与验收命令见 [`repo/CURRENT-SPRINT.md`](repo/CURRENT-SPRINT.md)，已完成批次见 [`repo/development-records/README.md`](repo/development-records/README.md)。当前活跃冲刺为 **Sprint 12 / Core「Services 支撑 Handler」实现**（基于真实代码与 `api/openapi/v1.yaml` GAP，闭合 19 个 Core handler 缺口 + 2 个 422，仅 ANI Core，Tier1 local profile）；A/B1/B2/B3 状态矩阵见 [`repo/development-records/sprint12-kickoff-core-svc-support.md`](repo/development-records/sprint12-kickoff-core-svc-support.md)，Sprint 13 真实 provider 代码关联计划见 [`repo/development-records/sprint13-real-provider-readiness-plan.md`](repo/development-records/sprint13-real-provider-readiness-plan.md)。
 
 ---
 

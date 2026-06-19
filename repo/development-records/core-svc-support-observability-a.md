@@ -36,9 +36,20 @@ go test ./pkg/adapters/runtime ./services/ani-gateway/internal/router
 
 - `pkg/ports/instance_observability.go`
 - `pkg/ports/sandbox_template_catalog.go`
+- `pkg/ports/gpu_inventory.go`
 - `pkg/adapters/runtime/local_instance_observability_service.go`
 - `pkg/adapters/runtime/local_gpu_inventory.go`
 - `pkg/adapters/runtime/local_sandbox_template_catalog.go`
 - `services/ani-gateway/internal/router/demo_instances.go`
 - `services/ani-gateway/internal/router/gpu_inventory_resources.go`
 - `services/ani-gateway/internal/router/router.go`
+
+## 后续真实环境门禁关联
+
+本批只完成 Tier1 local profile。Sprint 13 若推进真实 provider，必须沿用本批已建立的 port/handler 边界：
+
+- 实例观测：从 `ports.InstanceObservability` 接真实 K8s/kubelet/Prometheus adapter，并新增 instance-observability live gate。
+- GPU 清单：从既有 `ports.GPUInventory.ListNodeClasses` 接真实 GPU discovery/DCGM/node label adapter，并新增 gpu-inventory live gate。
+- Sandbox templates：从 `ports.SandboxTemplateCatalog` 接真实 catalog 来源；未接真实 catalog 前只允许 local profile。
+
+完整 Sprint 13 代码关联计划见 `repo/development-records/sprint13-real-provider-readiness-plan.md`。

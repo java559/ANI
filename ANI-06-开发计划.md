@@ -26,12 +26,12 @@
 
 ```
 仓库范围：仅 ANI Core。ANI Services 已冻结并移交外部产品团队，本仓库不再开发任何 Services 代码。
-当前阶段：Phase 1 / Sprint 11 / Core Real Deployment Validation 正式部署完成；Rook-Ceph 正式部署已完成
+当前阶段：Phase 1 / Sprint 12 / Core「Services 支撑 Handler」实现中；Sprint 11 / Core Real Deployment Validation 已闭环并转为历史回归门禁
 当前不是 Phase 2：Phase 2 指 2026-10 以后延期能力，不是下一次开发阶段
 交付目标：2026-09-30 ANI Core v1.0.0（Services P0 由外部团队负责，不在本仓库交付范围内）
 关键节奏：外部 Services 团队预计 2026-06-10 前后给出清晰的产品功能/交互风格/API 列表与参数；ANI Core 据此以 AI Coding 快速循环实现支撑（他们改产品/接口定义 → Core 生成/调整代码）。该定义到位前，Core 不基于猜测提前建设 Services 业务能力，避免返工。
-当前重心：Sprint 11 / Core Real Deployment Validation 正式部署完成；真实服务器只读验证已完成；Rook-Ceph 正式部署已完成（CephCluster Ready/HEALTH_OK，5 SSD OSD，ani-rbd-ssd StorageClass，RBD smoke test 与逐节点 reboot resilience 通过）；Sprint 11 执行环境：正式部署执行环境；不是实际 v1.0.0 发布；破坏性操作须单独审批；Sprint 5-10 历史回归门禁有效；guard 冻结仍有效；详见 repo/CURRENT-SPRINT.md
-当前活跃冲刺：Sprint 12 / Core「Services 支撑 Handler」实现（2026-06-19 起）；基于真实 Core 代码与 api/openapi/v1.yaml 的 GAP，闭合 19 个已声明未实现 Core handler + 2 个 422，分 B1/B2/B3 三批；仅 ANI Core，Tier1 local profile；B1 `CORE-SVC-SUPPORT-OBSERVABILITY-A` 已完成；Sprint 11 已闭环转历史回归门禁；详见 repo/development-records/sprint12-kickoff-core-svc-support.md
+当前重心：Sprint 12 / Core「Services 支撑 Handler」实现（2026-06-19 起）；基于真实 Core 代码与 api/openapi/v1.yaml 的 GAP，闭合 19 个已声明未实现 Core handler + 2 个 422，分 A/B1/B2/B3 批次；仅 ANI Core，Tier1 local profile；A `SPRINT12-KICKOFF-A` 与 B1 `CORE-SVC-SUPPORT-OBSERVABILITY-A` 已完成，B2/B3 待执行；B1 代码边界为 `pkg/ports/instance_observability.go`、`pkg/ports/gpu_inventory.go`、`pkg/ports/sandbox_template_catalog.go`、`pkg/adapters/runtime/local_*` 与 Gateway handler；不代表 real-provider、runtime ready 或 production ready；详见 repo/CURRENT-SPRINT.md
+下一阶段准备：Sprint 13 真实 provider / live gate 只在 Sprint 12 B1/B2/B3 的 handler、ports、local adapters 闭合后推进；计划必须从现有代码边界接入真实 adapter 与固定 live gate，见 repo/development-records/sprint13-real-provider-readiness-plan.md
 最近里程碑（详情见 repo/CURRENT-SPRINT.md 已完成切片）：
   2026-06-19  CORE-SVC-SUPPORT-OBSERVABILITY-A：B1 实例可观测与 GPU/Sandbox catalog handler 完成；新增 `InstanceObservability` port/local adapter、local GPU inventory、sandbox template catalog，注册 8 个 operationId；Tier1 local profile，响应带 dev_profile，不声明 runtime/production ready [Feature batch]
   2026-06-19  SPRINT12-KICKOFF-A：Sprint 12 启动 + GAP 分析归档，规划 19 个 Core handler 缺口（实例可观测/GPU 清单/网络路由/卷快照/对象存储/向量写入/K8s workloads）+ 2 个 422，分 B1/B2/B3 三批；仅 ANI Core，Tier1 local profile [Kickoff]
@@ -114,6 +114,8 @@
 | Sprint 9 ⭐ | ✅ Core-only 已完成 | 2026-06-04；计划窗口 2026-09-16~09-25 | `CORE-RC-GATE-A`、`CORE-RELEASE-EVIDENCE-A`、`CORE-OFFLINE-CHECKSUM-A`、`CORE-CLI-VERSION-A`、`CORE-RC-DOC-CONSISTENCY-A` 与 `SPRINT9-CLOSURE-A` 已完成；这是 RC readiness，不是实际 RC cut |
 | Sprint 10 ⭐ | ✅ Core-only 已完成 | 2026-06-04；计划窗口 2026-09-26~09-30 | `CORE-ARTIFACT-MANIFEST-A`、`CORE-VERSION-POLICY-A`、`CORE-FINAL-READINESS-A`、`CORE-CLI-RELEASE-METADATA-A`、`CORE-FINAL-DOC-CONSISTENCY-A` 与 `SPRINT10-CLOSURE-A` 已完成；这是 release-prep readiness，不是实际 v1.0.0 发布 |
 | Sprint 11 ⭐ | ✅ Core Real Deployment Validation 正式部署完成；Rook-Ceph 正式部署已完成 | 2026-06-05 | `SPRINT11-KICKOFF-A`、`CORE-STORAGE-DISK-RISK-A`、`CORE-REAL-DEPLOY-A`、`CORE-ROOK-CEPH-FORMAL-DEPLOYMENT-A`、`CORE-ROOK-CEPH-LIVE-DEPLOYMENT-A`、`CORE-ROOK-CEPH-VM-STORAGE-SMOKE-A`、`CORE-ROOK-CEPH-REBOOT-RESILIENCE-A`、`CORE-SAFE-COMPLETION-A`、`CORE-REAL-DEPLOY-DOC-CONSISTENCY-A`、`SPRINT11-SAFE-CLOSURE-A` 与 `CORE-HISTORICAL-DOC-MARKER-COMPAT-A` 已建立；CephCluster `Ready/HEALTH_OK`，5 个 SSD OSD 运行，`ani-rbd-ssd` StorageClass、RBD smoke test、KubeVirt VM RBD storage smoke 和逐节点 reboot resilience 通过；历史 Sprint 8/9/10 Core doc validators 已兼容当前历史归档表达；不是实际 v1.0.0 发布或完整 production ready |
+| Sprint 12 ⭐ | 进行中 | 2026-06-19 起 | Core「Services 支撑 Handler」实现；A `SPRINT12-KICKOFF-A` 已完成 GAP 与批次拆分；B1 `CORE-SVC-SUPPORT-OBSERVABILITY-A` 已完成实例观测、GPU inventory/occupancy、sandbox templates 的 Tier1 local profile handler；B2 网络/存储/K8s workloads 与 B3 对象/向量写入待执行；所有状态必须关联 `api/openapi/v1.yaml` operationId、`pkg/ports`、`pkg/adapters` 与 Gateway handler |
+| Sprint 13 ⭐ | 计划中 | Sprint 12 B1/B2/B3 完成后 | 真实 provider / live gate 收敛；从 Sprint 12 已建立的 ports/adapters/router 边界接入 K8s/kubelet/Prometheus/DCGM/Kata/Kube-OVN/Rook-Ceph/MinIO/向量后端等真实组件；计划见 `repo/development-records/sprint13-real-provider-readiness-plan.md`，未执行 live gate 前不得标 runtime/production ready |
 
 ### Core 与外部 Services 团队的协作门禁
 

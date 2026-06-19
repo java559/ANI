@@ -26,6 +26,12 @@
 |---|---|---|
 | CORE-SVC-SUPPORT-OBSERVABILITY-A | B1 实例可观测与 GPU/Sandbox catalog handler：新增实例 logs/events/metrics/security-events/exec session，只读观测 port + local adapter；新增 GPU inventory/occupancy handler 与 sandbox template catalog；全部为 Tier1 local profile，响应带 dev_profile，不声明 runtime/production ready | core-svc-support-observability-a.md |
 
+### Sprint 13 Planning（2026-06）
+
+| 批次 | 内容摘要 | 文件 |
+|---|---|---|
+| SPRINT13-REAL-PROVIDER-READINESS-PLAN | Sprint 13 真实 provider / live gate 代码关联计划：把 Sprint 12 B1/B2/B3 的 handler、ports、local adapters 映射到真实组件和 live gate；未执行 live gate 前不标 runtime/production ready | sprint13-real-provider-readiness-plan.md |
+
 ### Sprint 11 Kickoff（2026-06）
 
 | 批次 | 内容摘要 | 文件 |

@@ -26,9 +26,30 @@
 1. `SPRINT12-KICKOFF-A`：Sprint 12 启动 + GAP 分析归档，规划 19 个 Core handler 缺口 + 2 个 422，分 B1/B2/B3 三批；仅 ANI Core，Tier1 local profile。
 2. `CORE-SVC-SUPPORT-OBSERVABILITY-A`：B1 handler 已完成。新增实例可观测只读 port/local adapter，接入 `/instances/{instance_id}/logs`、`/events`、`/metrics`、`/security-events` 和 `POST /exec`；新增 GPU inventory local adapter 与 `gpu_inventory_resources.go`，注册 `/gpu-inventory`、`/gpu-inventory/occupancy`、`/sandbox-templates`；响应带 `dev_profile`，不声明 production/runtime ready。
 
+## Sprint 12 执行矩阵
+
+| 批次 | 范围 | 代码关联 | 当前状态 |
+|---|---|---|---|
+| A `SPRINT12-KICKOFF-A` | GAP 分析、A/B1/B2/B3 拆分、执行提示词 | `api/openapi/v1.yaml`、`services/ani-gateway/internal/router/*.go`、`development-records/sprint12-kickoff-core-svc-support.md`、`development-records/sprint12-batch-execution-prompts.md` | 已完成 |
+| B1 `CORE-SVC-SUPPORT-OBSERVABILITY-A` | 实例 logs/events/metrics/security-events/exec session；GPU inventory/occupancy；Sandbox templates | `pkg/ports/instance_observability.go`、`pkg/ports/gpu_inventory.go`、`pkg/ports/sandbox_template_catalog.go`、`pkg/adapters/runtime/local_instance_observability_service.go`、`pkg/adapters/runtime/local_gpu_inventory.go`、`pkg/adapters/runtime/local_sandbox_template_catalog.go`、`services/ani-gateway/internal/router/demo_instances.go`、`services/ani-gateway/internal/router/gpu_inventory_resources.go` | 已完成 Tier1 local profile |
+| B2 `CORE-SVC-SUPPORT-NETSTORE-A` | 网络 route、卷 snapshot、filesystem mount-targets、K8s workloads、2 个 422 | 目标：`pkg/ports/network_resources.go`、`pkg/ports/storage_resources.go`、`pkg/ports/k8s_cluster.go`、`services/ani-gateway/internal/router/network_resources.go`、`services/ani-gateway/internal/router/storage_resources.go`、`services/ani-gateway/internal/router/k8s_cluster_resources.go`、`services/ani-gateway/internal/router/vector_store_resources.go` | 待执行 |
+| B3 `CORE-SVC-SUPPORT-OBJVEC-A` | 对象存储 bucket/object 与 vector document insert | 目标：`pkg/ports/storage_resources.go`、`pkg/ports/object_store.go`、`pkg/ports/vector_store.go`、`services/ani-gateway/internal/router/storage_resources.go`、`services/ani-gateway/internal/router/vector_store_resources.go` | 待执行 |
+
+## Sprint 13 真实环境测试准备
+
+Sprint 13 不是把 Sprint 12 local profile 直接标为 production ready，而是在 B1/B2/B3 handler、ports、local adapters 已闭合后，按真实组件补 provider adapter 与 live gate。当前代码关联计划见 [`development-records/sprint13-real-provider-readiness-plan.md`](development-records/sprint13-real-provider-readiness-plan.md)。
+
+| Sprint 12 能力 | Sprint 13 真实组件方向 | 代码边界 |
+|---|---|---|
+| 实例观测 | K8s/kubelet/Prometheus 或等价观测后端 | `ports.InstanceObservability` 新增 real adapter，Gateway handler 不绕过 port |
+| GPU 清单/占用 | NVIDIA device plugin、DCGM、node labels 或等价 GPU discovery | 复用 `ports.GPUInventory.ListNodeClasses`，`getGPUOccupancy` 仍由清单派生或只读方法提供 |
+| Sandbox templates | Kata/runtimeClass/template catalog | 通过 `ports.SandboxTemplateCatalog` 接入真实 catalog |
+| 网络/存储/K8s workloads | Kube-OVN、Rook-Ceph/K8s CSI、Kubernetes API | 沿用 B2 ports/adapters/router 边界 |
+| 对象/向量写入 | MinIO/S3-compatible、Milvus/Qdrant 或选定向量后端 | 沿用 B3 ports/adapters/router 边界 |
+
 ## Sprint 11 已完成切片
 
-本节保留当前 Sprint 的可执行事实，完整历史清单以 `repo/development-records/README.md` 为唯一归档索引。
+本节保留 Sprint 11 的历史回归事实，完整历史清单以 `repo/development-records/README.md` 为唯一归档索引。
 
 1. `SPRINT11-KICKOFF-A`：入口文档切换到 Sprint 11 / Core Real Deployment Validation；明确只做 ANI Core，先跑真实服务器只读验证和风险评估。
 2. `CORE-STORAGE-DISK-RISK-A`：新增 `deploy/real-k8s-lab/sprint11-storage-disk-plan.yaml` 和 validator，记录三台物理机系统盘、数据盘、稳定 `/dev/disk/by-id` 映射、Rook-Ceph 风险策略。策略明确禁止依赖 `/dev/sdX` 顺序，禁止为“盘符对齐”调整启动盘或控制器枚举。
