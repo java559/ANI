@@ -46,8 +46,8 @@ Sprint 12 摘要：
 Sprint 13 production-shaped live gate 摘要：
 - S01 Kube-OVN network route：production_shape.status=passed。
 - S02 vCluster workloads：production_shape.status=passed。
-- S03 Rook-Ceph storage：production_shape.status=passed。
-- S04 NVIDIA device-plugin / DCGM：production_shape.status=passed。
+- S03 Rook-Ceph storage：SPRINT13-STORAGE-ROOK-CEPH-A-TRACK；validate-storage-live-gate；LIVE PENDING 仅作历史门禁兼容语境；production_shape.status=passed。
+- S04 NVIDIA device-plugin / DCGM：SPRINT13-GPU-INVENTORY-DCGM-A-TRACK；validate-gpu-inventory-live-gate；LIVE PENDING 仅作历史门禁兼容语境；production_shape.status=passed。
 - S05 MinIO object-store：SPRINT13-OBJECTSTORE-MINIO-A-TRACK；validate-object-store-live-gate；pre-signed URL；LIVE PENDING 仅作历史门禁兼容语境；production_shape.status=passed。
 - S06 Milvus vector-store：SPRINT13-VECTOR-MILVUS-A-TRACK；validate-vector-store-live-gate；LIVE PENDING 仅作历史门禁兼容语境；production_shape.status=passed。
 - S07 Prometheus + kubelet / K8s API observability：SPRINT13-INSTANCE-OBSERVABILITY-PROMETHEUS-A-TRACK；validate-instance-observability-live-gate；LIVE PENDING 仅作历史门禁兼容语境；production_shape.status=passed。
@@ -71,7 +71,7 @@ Sprint 13 production-shaped live gate 摘要：
 | Sprint 10 ⭐ | ✅ Core-only 已完成 | 2026-06-04；计划窗口 2026-09-26~09-30 | `CORE-ARTIFACT-MANIFEST-A`、`CORE-VERSION-POLICY-A`、`CORE-FINAL-READINESS-A`、`CORE-CLI-RELEASE-METADATA-A`、`CORE-FINAL-DOC-CONSISTENCY-A` 与 `SPRINT10-CLOSURE-A` 已完成；这是 release-prep readiness，不是实际 v1.0.0 发布 |
 | Sprint 11 ⭐ | ✅ Core Real Deployment Validation 正式部署完成；Rook-Ceph 正式部署已完成 | 2026-06-05 | Rook-Ceph CephCluster `Ready/HEALTH_OK`，5 个 SSD OSD，`ani-rbd-ssd` StorageClass、RBD smoke、KubeVirt VM RBD storage smoke、逐节点 reboot resilience 通过。批次清单见 `repo/development-records/README.md`；不是实际 v1.0.0 发布或完整 production ready |
 | Sprint 12 ⭐ | ✅ Core-only 已完成 | 2026-06-19 | Core「Services 支撑 Handler」收口：19 个 handler + 2 个 422 均关联 `api/openapi/v1.yaml` operationId、`pkg/ports`、`pkg/adapters`、Gateway handler；契约改动见 [`repo/api/core-contract-changelog-sprint12-13.md`](repo/api/core-contract-changelog-sprint12-13.md)；仅 Tier1 local profile，不代表 runtime/production ready |
-| Sprint 13 ⭐ | 🔄 收敛中（S01–S07 production-shaped gate passed） | 2026-06-19 起 | 真实 provider / live gate 收敛：S01 Kube-OVN、S02 vCluster、S03 Rook-Ceph、S04 NVIDIA device-plugin/DCGM、S05 MinIO、S06 Milvus、S07 Prometheus observability 均 `production_shape.status=passed` 并归档 evidence。`SPRINT13-INSTANCE-OBSERVABILITY-PROMETHEUS-A-TRACK` / `validate-instance-observability-live-gate` 固定 Prometheus + kubelet contract；历史 LIVE PENDING token 仅作门禁兼容语境；计划见 `repo/development-records/sprint13-real-provider-readiness-plan.md`；production-shaped passed ≠ full platform production ready |
+| Sprint 13 ⭐ | 🔄 收敛中（S01–S07 production-shaped gate passed） | 2026-06-19 起 | 真实 provider / live gate 收敛：S01 Kube-OVN、S02 vCluster、S03 Rook-Ceph（`SPRINT13-STORAGE-ROOK-CEPH-A-TRACK` / `validate-storage-live-gate`）、S04 NVIDIA device-plugin/DCGM（`SPRINT13-GPU-INVENTORY-DCGM-A-TRACK` / `validate-gpu-inventory-live-gate`）、S05 MinIO、S06 Milvus、S07 Prometheus observability 均 `production_shape.status=passed` 并归档 evidence。`SPRINT13-INSTANCE-OBSERVABILITY-PROMETHEUS-A-TRACK` / `validate-instance-observability-live-gate` 固定 Prometheus + kubelet contract；历史 LIVE PENDING token 仅作门禁兼容语境；计划见 `repo/development-records/sprint13-real-provider-readiness-plan.md`；production-shaped passed ≠ full platform production ready |
 
 ### Core 与外部 Services 团队的协作门禁
 
