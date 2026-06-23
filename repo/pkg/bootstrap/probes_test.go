@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kubercloud/ani/pkg/ports"
 )
@@ -30,20 +32,128 @@ func TestProbeHandlerHealthz(t *testing.T) {
 	}
 }
 
-func TestRunProbeChecksDegradesOnDependencyFailure(t *testing.T) {
+func TestRunProbeChecksFailsOnStrongDependencyFailure(t *testing.T) {
 	result := runProbeChecks(context.Background(), []probeCheck{
 		{name: "postgres", run: func(context.Context) error { return nil }},
 		{name: "redis", run: func(context.Context) error { return errors.New("dial failed") }},
 	})
 
-	if result.Status != "degraded" {
-		t.Fatalf("status = %q, want degraded", result.Status)
+	if result.Status != "fail" {
+		t.Fatalf("status = %q, want fail", result.Status)
 	}
 	if result.Checks["postgres"].Status != "ok" {
 		t.Fatalf("postgres status = %q, want ok", result.Checks["postgres"].Status)
 	}
 	if result.Checks["redis"].Status != "fail" || result.Checks["redis"].Error == "" {
 		t.Fatalf("redis check = %+v, want fail with error", result.Checks["redis"])
+	}
+}
+
+func TestDependencyProbeChecksReportsObjectStoreUnavailable(t *testing.T) {
+	checks := dependencyProbeChecks(&Deps{
+		Ports: Capabilities{
+			ObjectStore: fakeObjectStoreHealth{err: errors.New("minio unavailable")},
+		},
+	})
+
+	check, ok := findProbeCheck(checks, "object-store")
+	if !ok {
+		t.Fatal("object-store probe check missing")
+	}
+	if err := check.run(context.Background()); err == nil || !strings.Contains(err.Error(), "minio unavailable") {
+		t.Fatalf("object-store check error = %v, want minio unavailable", err)
+	}
+}
+
+func TestWeakDependencyDownYieldsDegradedNotFail(t *testing.T) {
+	handler := newProbeHandler("test-service", []probeCheck{
+		{name: "object-store", run: func(context.Context) error { return errors.New("minio unavailable") }},
+	})
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 for weak dependency degradation", recorder.Code)
+	}
+	var body probeResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Status != "degraded" {
+		t.Fatalf("body status = %q, want degraded", body.Status)
+	}
+	if body.Checks["object-store"].Status != "degraded" {
+		t.Fatalf("object-store status = %q, want degraded", body.Checks["object-store"].Status)
+	}
+}
+
+func TestDependencyProbeChecksReportsVectorStoreUnavailable(t *testing.T) {
+	checks := dependencyProbeChecks(&Deps{
+		Ports: Capabilities{
+			VectorStore: fakeVectorStoreHealth{err: errors.New("milvus unavailable")},
+		},
+	})
+
+	check, ok := findProbeCheck(checks, "vector-store")
+	if !ok {
+		t.Fatal("vector-store probe check missing")
+	}
+	if err := check.run(context.Background()); err == nil || !strings.Contains(err.Error(), "milvus unavailable") {
+		t.Fatalf("vector-store check error = %v, want milvus unavailable", err)
+	}
+}
+
+func TestDependencyProbeChecksReportsKubernetesAPIUnavailable(t *testing.T) {
+	checks := dependencyProbeChecks(&Deps{
+		Ports: Capabilities{
+			KubernetesAPI: fakeHealthChecker{err: errors.New("kubernetes api unavailable")},
+		},
+	})
+
+	check, ok := findProbeCheck(checks, "kubernetes-api")
+	if !ok {
+		t.Fatal("kubernetes-api probe check missing")
+	}
+	if err := check.run(context.Background()); err == nil || !strings.Contains(err.Error(), "kubernetes api unavailable") {
+		t.Fatalf("kubernetes-api check error = %v, want kubernetes api unavailable", err)
+	}
+}
+
+func TestDependencyProbeChecksIgnoreTypedNilKubernetesAPI(t *testing.T) {
+	var checker *panicHealthChecker
+	checks := dependencyProbeChecks(&Deps{
+		Ports: Capabilities{
+			KubernetesAPI: checker,
+		},
+	})
+
+	check, ok := findProbeCheck(checks, "kubernetes-api")
+	if !ok {
+		t.Fatal("kubernetes-api probe check missing")
+	}
+	if err := check.run(context.Background()); err != nil {
+		t.Fatalf("kubernetes-api check error = %v, want nil for typed nil dependency", err)
+	}
+}
+
+func TestDependencyProbeChecksIgnoreNotConfiguredDataPlane(t *testing.T) {
+	checks := dependencyProbeChecks(&Deps{
+		Ports: Capabilities{
+			ObjectStore:   fakeObjectStoreHealth{err: ports.ErrNotConfigured},
+			VectorStore:   fakeVectorStoreHealth{err: ports.ErrNotConfigured},
+			KubernetesAPI: fakeHealthChecker{err: ports.ErrNotConfigured},
+		},
+	})
+
+	for _, name := range []string{"object-store", "vector-store", "kubernetes-api"} {
+		check, ok := findProbeCheck(checks, name)
+		if !ok {
+			t.Fatalf("%s probe check missing", name)
+		}
+		if err := check.run(context.Background()); err != nil {
+			t.Fatalf("%s check error = %v, want nil for not configured", name, err)
+		}
 	}
 }
 
@@ -85,4 +195,91 @@ type fakeReconcileMetricsReader struct {
 
 func (r fakeReconcileMetricsReader) Metrics() ports.ReconcileControllerMetrics {
 	return r.metrics
+}
+
+func findProbeCheck(checks []probeCheck, name string) (probeCheck, bool) {
+	for _, check := range checks {
+		if check.name == name {
+			return check, true
+		}
+	}
+	return probeCheck{}, false
+}
+
+type fakeObjectStoreHealth struct {
+	err error
+}
+
+func (s fakeObjectStoreHealth) Health(context.Context) error {
+	return s.err
+}
+
+func (fakeObjectStoreHealth) EnsureBucket(context.Context, ports.BucketClass) error {
+	return nil
+}
+
+func (fakeObjectStoreHealth) PutObject(context.Context, ports.PutObjectInput) (ports.ObjectMetadata, error) {
+	return ports.ObjectMetadata{}, nil
+}
+
+func (fakeObjectStoreHealth) GetObject(context.Context, ports.ObjectRef) (io.ReadCloser, ports.ObjectMetadata, error) {
+	return io.NopCloser(strings.NewReader("")), ports.ObjectMetadata{}, nil
+}
+
+func (fakeObjectStoreHealth) DeleteObject(context.Context, ports.ObjectRef) error {
+	return nil
+}
+
+func (fakeObjectStoreHealth) StatObject(context.Context, ports.ObjectRef) (ports.ObjectMetadata, error) {
+	return ports.ObjectMetadata{}, nil
+}
+
+func (fakeObjectStoreHealth) SignedUploadURL(context.Context, ports.ObjectRef, time.Duration) (ports.SignedURL, error) {
+	return ports.SignedURL{}, nil
+}
+
+func (fakeObjectStoreHealth) SignedDownloadURL(context.Context, ports.ObjectRef, time.Duration) (ports.SignedURL, error) {
+	return ports.SignedURL{}, nil
+}
+
+type fakeVectorStoreHealth struct {
+	err error
+}
+
+func (s fakeVectorStoreHealth) Health(context.Context) error {
+	return s.err
+}
+
+func (fakeVectorStoreHealth) CollectionHealth(context.Context, ports.VectorCollectionRef) (ports.VectorCollectionHealth, error) {
+	return ports.VectorCollectionHealth{Ready: true}, nil
+}
+
+func (fakeVectorStoreHealth) EnsureCollection(context.Context, ports.VectorCollectionRef, int) error {
+	return nil
+}
+
+func (fakeVectorStoreHealth) Upsert(context.Context, ports.VectorCollectionRef, []ports.VectorRecord) error {
+	return nil
+}
+
+func (fakeVectorStoreHealth) Search(context.Context, ports.VectorSearchQuery) ([]ports.VectorSearchResult, error) {
+	return nil, nil
+}
+
+func (fakeVectorStoreHealth) Delete(context.Context, ports.VectorCollectionRef, []string) error {
+	return nil
+}
+
+type fakeHealthChecker struct {
+	err error
+}
+
+func (s fakeHealthChecker) Health(context.Context) error {
+	return s.err
+}
+
+type panicHealthChecker struct{}
+
+func (*panicHealthChecker) Health(context.Context) error {
+	panic("typed nil health checker must not be called")
 }

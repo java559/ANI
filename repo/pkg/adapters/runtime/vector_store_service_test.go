@@ -230,6 +230,10 @@ func (s *fakeVectorStore) Delete(context.Context, ports.VectorCollectionRef, []s
 	return nil
 }
 
-func (s *fakeVectorStore) Health(context.Context, ports.VectorCollectionRef) (ports.VectorCollectionHealth, error) {
+func (s *fakeVectorStore) Health(context.Context) error {
+	return nil
+}
+
+func (s *fakeVectorStore) CollectionHealth(context.Context, ports.VectorCollectionRef) (ports.VectorCollectionHealth, error) {
 	return ports.VectorCollectionHealth{Ready: true}, nil
 }

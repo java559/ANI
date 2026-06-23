@@ -10,6 +10,10 @@ type NotConfigured struct{}
 
 var _ ports.VectorStore = NotConfigured{}
 
+func (NotConfigured) Health(context.Context) error {
+	return ports.ErrNotConfigured
+}
+
 func (NotConfigured) EnsureCollection(context.Context, ports.VectorCollectionRef, int) error {
 	return ports.ErrNotConfigured
 }
@@ -26,6 +30,6 @@ func (NotConfigured) Delete(context.Context, ports.VectorCollectionRef, []string
 	return ports.ErrNotConfigured
 }
 
-func (NotConfigured) Health(context.Context, ports.VectorCollectionRef) (ports.VectorCollectionHealth, error) {
+func (NotConfigured) CollectionHealth(context.Context, ports.VectorCollectionRef) (ports.VectorCollectionHealth, error) {
 	return ports.VectorCollectionHealth{}, ports.ErrNotConfigured
 }

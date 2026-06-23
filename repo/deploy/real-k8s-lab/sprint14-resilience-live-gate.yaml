@@ -1,0 +1,40 @@
+profile: SPRINT14-CORE-RESILIENCE-LIVE-GATE
+status: contract
+description: >
+  Sprint 14 Core resilience live validation gate for proving the three
+  resilience phases against an isolated REAL-K8S-LAB-A fixture: data-plane
+  readyz under real backend kill, weak dependency degradation under real
+  backend down, and primary/follower controller failover after deleting the
+  active leader pod.
+
+required_tools:
+  - kubectl
+
+required_endpoints:
+  - kubernetes_api
+  - reconcile_worker_metrics
+  - postgres_control_plane_leases
+
+live_checks:
+  - id: p0-readyz-baseline
+    command: kubectl get --raw /api/v1/namespaces/{namespace}/services/sprint14-reconcile-worker-metrics:9205/proxy/readyz
+    pass_condition: readyz_status_ok_before_faults
+  - id: p0-real-backend-kill-strong-dependency
+    command: kubectl delete pod {redis_pod} -n {namespace}; kubectl scale deployment/sprint14-redis --replicas=0 -n {namespace}
+    pass_condition: readyz_reports_fail_or_http_503_while_strong_dependency_down
+  - id: p1-real-backend-kill-weak-dependency-degraded
+    command: kubectl delete pod {minio_pod} -n {namespace}; kubectl scale deployment/sprint14-minio --replicas=0 -n {namespace}
+    pass_condition: readyz_reports_degraded_for_weak_object_store_without_process_failure
+  - id: p2-primary-kill-controller-failover
+    command: kubectl delete pod {leader_pod} -n {namespace}
+    pass_condition: follower_acquires_control_plane_lease_after_primary_delete
+  - id: p2-recovery-readyz-ok
+    command: kubectl rollout status deployment/sprint14-redis deployment/sprint14-minio -n {namespace}
+    pass_condition: readyz_status_ok_after_backends_recover
+
+readiness_levels:
+  contract:
+    meaning: Gate definition and validator exist; no live Sprint14 resilience proof.
+  live:
+    meaning: Isolated Sprint14 fixture passed real backend kill, degradation and controller primary failover checks.
+

@@ -253,6 +253,10 @@ func (s *fakeK8sClusterService) ListNodePools(context.Context, ports.K8sClusterN
 	return nil, ports.ErrUnsupported
 }
 
+func (s *fakeK8sClusterService) Health(context.Context) error {
+	return nil
+}
+
 func (s *fakeK8sClusterService) UpdateNodePool(context.Context, ports.K8sClusterNodePoolUpdateRequest) (ports.K8sClusterNodePoolRecord, error) {
 	return ports.K8sClusterNodePoolRecord{}, ports.ErrUnsupported
 }

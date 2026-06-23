@@ -45,6 +45,7 @@ type PutObjectInput struct {
 }
 
 type ObjectStore interface {
+	Health(ctx context.Context) error
 	EnsureBucket(ctx context.Context, class BucketClass) error
 	PutObject(ctx context.Context, input PutObjectInput) (ObjectMetadata, error)
 	GetObject(ctx context.Context, ref ObjectRef) (io.ReadCloser, ObjectMetadata, error)

@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 	"time"
 
+	adapterresilience "github.com/kubercloud/ani/pkg/adapters/resilience"
 	"github.com/kubercloud/ani/pkg/ports"
 )
 
@@ -16,6 +18,7 @@ const healthVersion = "v0.8.0"
 
 type probeCheck struct {
 	name string
+	mode adapterresilience.DependencyMode
 	run  func(context.Context) error
 }
 
@@ -42,7 +45,7 @@ func newProbeHandler(serviceName string, checks []probeCheck, metricsReaders ...
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		result := runProbeChecks(r.Context(), checks)
 		statusCode := http.StatusOK
-		if result.Status != "ok" {
+		if result.Status == "fail" {
 			statusCode = http.StatusServiceUnavailable
 		}
 		writeProbeJSON(w, statusCode, result)
@@ -112,8 +115,19 @@ func runProbeChecks(ctx context.Context, checks []probeCheck) probeResponse {
 			LatencyMS: time.Since(started).Milliseconds(),
 		}
 		if err != nil {
-			response.Status = "degraded"
-			body.Status = "fail"
+			mode := check.mode
+			if mode == "" {
+				mode = adapterresilience.DependencyModeFor(check.name)
+			}
+			if mode.IsWeak() {
+				if response.Status == "ok" {
+					response.Status = "degraded"
+				}
+				body.Status = "degraded"
+			} else {
+				response.Status = "fail"
+				body.Status = "fail"
+			}
 			body.Error = err.Error()
 		}
 		response.Checks[check.name] = body
@@ -128,19 +142,22 @@ func writeProbeJSON(w http.ResponseWriter, statusCode int, body probeResponse) {
 }
 
 func dependencyProbeChecks(deps *Deps) []probeCheck {
+	dependencyCheck := func(name string, run func(context.Context) error) probeCheck {
+		return probeCheck{name: name, mode: adapterresilience.DependencyModeFor(name), run: run}
+	}
 	return []probeCheck{
-		{
-			name: "postgres",
-			run: func(ctx context.Context) error {
+		dependencyCheck(
+			"postgres",
+			func(ctx context.Context) error {
 				if deps == nil || deps.DB == nil {
 					return errors.New("postgres dependency is not configured")
 				}
 				return deps.DB.Ping(ctx)
 			},
-		},
-		{
-			name: "nats",
-			run: func(context.Context) error {
+		),
+		dependencyCheck(
+			"nats",
+			func(context.Context) error {
 				if deps == nil || deps.NATS == nil {
 					return errors.New("nats dependency is not configured")
 				}
@@ -149,15 +166,67 @@ func dependencyProbeChecks(deps *Deps) []probeCheck {
 				}
 				return nil
 			},
-		},
-		{
-			name: "redis",
-			run: func(ctx context.Context) error {
+		),
+		dependencyCheck(
+			"redis",
+			func(ctx context.Context) error {
 				if deps == nil || deps.Redis == nil {
 					return errors.New("redis dependency is not configured")
 				}
 				return deps.Redis.Ping(ctx).Err()
 			},
-		},
+		),
+		dependencyCheck(
+			"object-store",
+			func(ctx context.Context) error {
+				if deps == nil || isNilDependencyPort(deps.Ports.ObjectStore) {
+					return nil
+				}
+				err := deps.Ports.ObjectStore.Health(ctx)
+				if errors.Is(err, ports.ErrNotConfigured) {
+					return nil
+				}
+				return err
+			},
+		),
+		dependencyCheck(
+			"vector-store",
+			func(ctx context.Context) error {
+				if deps == nil || isNilDependencyPort(deps.Ports.VectorStore) {
+					return nil
+				}
+				err := deps.Ports.VectorStore.Health(ctx)
+				if errors.Is(err, ports.ErrNotConfigured) {
+					return nil
+				}
+				return err
+			},
+		),
+		dependencyCheck(
+			"kubernetes-api",
+			func(ctx context.Context) error {
+				if deps == nil || isNilDependencyPort(deps.Ports.KubernetesAPI) {
+					return nil
+				}
+				err := deps.Ports.KubernetesAPI.Health(ctx)
+				if errors.Is(err, ports.ErrNotConfigured) {
+					return nil
+				}
+				return err
+			},
+		),
+	}
+}
+
+func isNilDependencyPort(value any) bool {
+	if value == nil {
+		return true
+	}
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return reflected.IsNil()
+	default:
+		return false
 	}
 }

@@ -11,12 +11,12 @@ import (
 )
 
 type CacheStore struct {
-	client *goredis.Client
+	client goredis.UniversalClient
 }
 
 var _ ports.CacheStore = (*CacheStore)(nil)
 
-func NewCacheStore(client *goredis.Client) *CacheStore {
+func NewCacheStore(client goredis.UniversalClient) *CacheStore {
 	return &CacheStore{client: client}
 }
 
@@ -36,6 +36,14 @@ func (s *CacheStore) Set(ctx context.Context, key string, value []byte, ttl time
 		return fmt.Errorf("cache set: %w", err)
 	}
 	return nil
+}
+
+func (s *CacheStore) SetNX(ctx context.Context, key string, value []byte, ttl time.Duration) (bool, error) {
+	ok, err := s.client.SetNX(ctx, key, value, ttl).Result()
+	if err != nil {
+		return false, fmt.Errorf("cache setnx: %w", err)
+	}
+	return ok, nil
 }
 
 func (s *CacheStore) Delete(ctx context.Context, key string) error {

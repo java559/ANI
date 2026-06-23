@@ -48,6 +48,114 @@ func TestMinIOObjectStoreEnsureBucketCreatesMissingBucketWithSignedRequest(t *te
 	}
 }
 
+func TestMinIOObjectStoreEnforcesRequestTimeout(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	})}
+
+	store, err := NewMinIOObjectStore(MinIOObjectStoreConfig{
+		Endpoint:        "http://minio.test",
+		AccessKeyID:     "minio",
+		SecretAccessKey: "secret",
+		HTTPClient:      client,
+		RequestTimeout:  time.Millisecond,
+		Now:             fixedMinIOTestClock,
+	})
+	if err != nil {
+		t.Fatalf("NewMinIOObjectStore() error = %v", err)
+	}
+
+	err = store.EnsureBucket(context.Background(), ports.BucketClass("models-a"))
+	if err == nil {
+		t.Fatal("EnsureBucket() error = nil, want request timeout")
+	}
+	if !strings.Contains(err.Error(), context.DeadlineExceeded.Error()) {
+		t.Fatalf("EnsureBucket() error = %v, want deadline exceeded", err)
+	}
+}
+
+func TestMinIOObjectStoreHealthUsesSignedRootRequest(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodGet || r.URL.Path != "/" {
+			t.Fatalf("request = %s %s, want GET /", r.Method, r.URL.Path)
+		}
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "AWS4-HMAC-SHA256") {
+			t.Fatalf("request missing SigV4 authorization header: %q", r.Header.Get("Authorization"))
+		}
+		return minIOTestResponse(http.StatusOK), nil
+	})}
+
+	store, err := NewMinIOObjectStore(MinIOObjectStoreConfig{
+		Endpoint:        "http://minio.test",
+		AccessKeyID:     "minio",
+		SecretAccessKey: "secret",
+		HTTPClient:      client,
+		Now:             fixedMinIOTestClock,
+	})
+	if err != nil {
+		t.Fatalf("NewMinIOObjectStore() error = %v", err)
+	}
+
+	if err := store.Health(context.Background()); err != nil {
+		t.Fatalf("Health() error = %v", err)
+	}
+}
+
+func TestMinIOAcceptsEndpointList(t *testing.T) {
+	var gotHost string
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotHost = r.URL.Host
+		return minIOTestResponse(http.StatusOK), nil
+	})}
+
+	store, err := NewMinIOObjectStore(MinIOObjectStoreConfig{
+		Endpoints:       []string{"http://minio-a.test:9000", "http://minio-b.test:9000"},
+		AccessKeyID:     "minio",
+		SecretAccessKey: "secret",
+		HTTPClient:      client,
+		Now:             fixedMinIOTestClock,
+	})
+	if err != nil {
+		t.Fatalf("NewMinIOObjectStore() error = %v", err)
+	}
+	if err := store.Health(context.Background()); err != nil {
+		t.Fatalf("Health() error = %v", err)
+	}
+	if gotHost != "minio-a.test:9000" {
+		t.Fatalf("host = %q, want first endpoint minio-a.test:9000", gotHost)
+	}
+}
+
+func TestMinIOHealthFailsOverEndpointList(t *testing.T) {
+	var hosts []string
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		hosts = append(hosts, r.URL.Host)
+		if r.URL.Host == "minio-a.test:9000" {
+			return minIOTestResponse(http.StatusServiceUnavailable), nil
+		}
+		return minIOTestResponse(http.StatusOK), nil
+	})}
+
+	store, err := NewMinIOObjectStore(MinIOObjectStoreConfig{
+		Endpoints:       []string{"http://minio-a.test:9000", "http://minio-b.test:9000"},
+		AccessKeyID:     "minio",
+		SecretAccessKey: "secret",
+		HTTPClient:      client,
+		Now:             fixedMinIOTestClock,
+	})
+	if err != nil {
+		t.Fatalf("NewMinIOObjectStore() error = %v", err)
+	}
+	if err := store.Health(context.Background()); err != nil {
+		t.Fatalf("Health() error = %v", err)
+	}
+	want := []string{"minio-a.test:9000", "minio-b.test:9000"}
+	if strings.Join(hosts, ",") != strings.Join(want, ",") {
+		t.Fatalf("hosts = %v, want %v", hosts, want)
+	}
+}
+
 func TestMinIOObjectStoreEnsureBucketTreatsExistingBucketAsReady(t *testing.T) {
 	t.Parallel()
 

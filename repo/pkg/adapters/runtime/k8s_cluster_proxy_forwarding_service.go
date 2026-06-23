@@ -55,6 +55,13 @@ func NewK8sClusterProxyForwardingService(base ports.K8sClusterService, resolver 
 	return service
 }
 
+func (s *k8sClusterProxyForwardingService) Health(ctx context.Context) error {
+	if s.base == nil {
+		return fmt.Errorf("%w: base k8s cluster service is required", ports.ErrNotConfigured)
+	}
+	return s.base.Health(ctx)
+}
+
 func (s *k8sClusterProxyForwardingService) CreateCluster(ctx context.Context, req ports.K8sClusterCreateRequest) (ports.K8sClusterRecord, error) {
 	if s.base == nil {
 		return ports.K8sClusterRecord{}, fmt.Errorf("%w: base k8s cluster service is required", ports.ErrNotConfigured)

@@ -278,6 +278,7 @@ type K8sClusterKubeconfigProvider interface {
 }
 
 type K8sClusterService interface {
+	Health(ctx context.Context) error
 	CreateCluster(ctx context.Context, req K8sClusterCreateRequest) (K8sClusterRecord, error)
 	GetCluster(ctx context.Context, req K8sClusterGetRequest) (K8sClusterRecord, error)
 	ListClusters(ctx context.Context, req K8sClusterListRequest) ([]K8sClusterRecord, error)

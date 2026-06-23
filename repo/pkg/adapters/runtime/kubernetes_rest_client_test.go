@@ -3,7 +3,9 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kubercloud/ani/pkg/adapters/resilience"
 	"github.com/kubercloud/ani/pkg/ports"
 )
 
@@ -46,6 +49,124 @@ func TestKubernetesRESTClientServerSideDryRunUsesDryRunAll(t *testing.T) {
 	}
 	if gotAuth != "Bearer token-a" {
 		t.Fatalf("Authorization = %q, want bearer token", gotAuth)
+	}
+}
+
+func TestKubernetesRESTClientEnforcesRequestTimeout(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	})
+
+	client, err := NewKubernetesRESTClient(KubernetesRESTClientConfig{
+		Host:           "https://kubernetes.test",
+		HTTPClient:     &http.Client{Transport: transport},
+		RequestTimeout: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewKubernetesRESTClient() error = %v", err)
+	}
+
+	_, err = client.ServerSideDryRun(context.Background(), renderedDeployment(t))
+	if err == nil {
+		t.Fatal("ServerSideDryRun() error = nil, want request timeout")
+	}
+	if !strings.Contains(err.Error(), context.DeadlineExceeded.Error()) {
+		t.Fatalf("ServerSideDryRun() error = %v, want deadline exceeded", err)
+	}
+}
+
+func TestKubernetesRESTClientHealthCallsVersion(t *testing.T) {
+	var gotPath string
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotPath = r.URL.Path
+		return jsonResponse(http.StatusOK, `{"gitVersion":"v1.36.1"}`), nil
+	})
+
+	client := newTestKubernetesRESTClient(t, transport)
+	if err := client.Health(context.Background()); err != nil {
+		t.Fatalf("Health() error = %v", err)
+	}
+	if gotPath != "/version" {
+		t.Fatalf("path = %q, want /version", gotPath)
+	}
+}
+
+func TestKubernetesRESTClientHealthUsesRetryPolicy(t *testing.T) {
+	attempts := 0
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		attempts++
+		if attempts == 1 {
+			return jsonResponse(http.StatusServiceUnavailable, `{"message":"temporarily unavailable"}`), nil
+		}
+		return jsonResponse(http.StatusOK, `{"gitVersion":"v1.36.1"}`), nil
+	})
+
+	client, err := NewKubernetesRESTClient(KubernetesRESTClientConfig{
+		Host:       "https://kubernetes.example.test",
+		HTTPClient: &http.Client{Transport: transport},
+		RetryPolicy: resilience.Policy{
+			MaxAttempts: 2,
+			BaseBackoff: time.Nanosecond,
+			MaxBackoff:  time.Nanosecond,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewKubernetesRESTClient() error = %v", err)
+	}
+
+	if err := client.Health(context.Background()); err != nil {
+		t.Fatalf("Health() error = %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("attempts = %d, want 2", attempts)
+	}
+}
+
+func TestKubernetesRESTErrorClassifiesRetryable(t *testing.T) {
+	tests := []struct {
+		name      string
+		transport http.RoundTripper
+		retryable bool
+		invalid   bool
+	}{
+		{
+			name: "503",
+			transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				return jsonResponse(http.StatusServiceUnavailable, `{"message":"temporarily unavailable"}`), nil
+			}),
+			retryable: true,
+		},
+		{
+			name: "400",
+			transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				return jsonResponse(http.StatusBadRequest, `{"message":"bad request"}`), nil
+			}),
+			invalid: true,
+		},
+		{
+			name: "network",
+			transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				return nil, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}
+			}),
+			retryable: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := newTestKubernetesRESTClient(t, tt.transport)
+			err := client.Health(context.Background())
+			if err == nil {
+				t.Fatal("Health() error = nil, want classified Kubernetes REST error")
+			}
+			if got := resilience.Retryable(err); got != tt.retryable {
+				t.Fatalf("Retryable(%v) = %v, want %v", err, got, tt.retryable)
+			}
+			if got := errors.Is(err, ports.ErrInvalid); got != tt.invalid {
+				t.Fatalf("errors.Is(err, ErrInvalid) = %v, want %v for %v", got, tt.invalid, err)
+			}
+		})
 	}
 }
 
@@ -136,6 +257,34 @@ func TestKubernetesRESTClientApplyUsesServerSideApply(t *testing.T) {
 	}
 	if gotContentType != kubernetesApplyPatchContentType {
 		t.Fatalf("Content-Type = %q, want apply patch", gotContentType)
+	}
+}
+
+func TestKubernetesRESTClientApplyDoesNotRetryWrites(t *testing.T) {
+	attempts := 0
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		attempts++
+		return jsonResponse(http.StatusServiceUnavailable, `{"message":"temporarily unavailable"}`), nil
+	})
+	client, err := NewKubernetesRESTClient(KubernetesRESTClientConfig{
+		Host:         "https://kubernetes.example.test",
+		FieldManager: "ani-test",
+		HTTPClient:   &http.Client{Transport: transport},
+		RetryPolicy: resilience.Policy{
+			MaxAttempts: 3,
+			BaseBackoff: time.Nanosecond,
+			MaxBackoff:  time.Nanosecond,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewKubernetesRESTClient() error = %v", err)
+	}
+
+	if _, err := client.Apply(context.Background(), validProviderApplyRequest(t)); err == nil {
+		t.Fatal("Apply() error = nil, want Kubernetes write failure")
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts = %d, want writes to avoid retry", attempts)
 	}
 }
 

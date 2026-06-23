@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kubercloud/ani/pkg/ports"
 )
@@ -53,6 +54,107 @@ func TestMilvusVectorStoreEnsuresCollectionWithQuickSetupSchema(t *testing.T) {
 	params, ok := requestBody["params"].(map[string]any)
 	if !ok || params["max_length"] != "256" {
 		t.Fatalf("params = %#v, want VarChar max_length", requestBody["params"])
+	}
+}
+
+func TestMilvusVectorStoreEnforcesRequestTimeout(t *testing.T) {
+	client := &http.Client{Transport: vectorRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	})}
+
+	store, err := NewMilvusVectorStore(MilvusVectorStoreConfig{
+		Endpoint:       "http://milvus.test",
+		HTTPClient:     client,
+		RequestTimeout: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewMilvusVectorStore() error = %v", err)
+	}
+
+	err = store.EnsureCollection(context.Background(), ports.VectorCollectionRef{TenantID: "tenant-a", KBID: "vst-main"}, 768)
+	if err == nil {
+		t.Fatal("EnsureCollection() error = nil, want request timeout")
+	}
+	if !strings.Contains(err.Error(), context.DeadlineExceeded.Error()) {
+		t.Fatalf("EnsureCollection() error = %v, want deadline exceeded", err)
+	}
+}
+
+func TestMilvusVectorStoreHealthListsCollections(t *testing.T) {
+	var requestBody map[string]any
+	client := &http.Client{Transport: vectorRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v2/vectordb/collections/list" {
+			t.Fatalf("request = %s %s, want POST /v2/vectordb/collections/list", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		return milvusTestJSONResponse(http.StatusOK, `{"code":0,"data":[]}`), nil
+	})}
+
+	store, err := NewMilvusVectorStore(MilvusVectorStoreConfig{
+		Endpoint:   "http://milvus.test",
+		Database:   "ani",
+		HTTPClient: client,
+	})
+	if err != nil {
+		t.Fatalf("NewMilvusVectorStore() error = %v", err)
+	}
+
+	if err := store.Health(context.Background()); err != nil {
+		t.Fatalf("Health() error = %v", err)
+	}
+	if requestBody["dbName"] != "ani" {
+		t.Fatalf("request body = %#v, want dbName", requestBody)
+	}
+}
+
+func TestMilvusAcceptsEndpointList(t *testing.T) {
+	var gotHost string
+	client := &http.Client{Transport: vectorRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotHost = r.URL.Host
+		return milvusTestJSONResponse(http.StatusOK, `{"code":0,"data":[]}`), nil
+	})}
+	store, err := NewMilvusVectorStore(MilvusVectorStoreConfig{
+		Endpoints:  []string{"http://milvus-a.test:19530", "http://milvus-b.test:19530"},
+		HTTPClient: client,
+	})
+	if err != nil {
+		t.Fatalf("NewMilvusVectorStore() error = %v", err)
+	}
+
+	if err := store.Health(context.Background()); err != nil {
+		t.Fatalf("Health() error = %v", err)
+	}
+	if gotHost != "milvus-a.test:19530" {
+		t.Fatalf("host = %q, want first endpoint milvus-a.test:19530", gotHost)
+	}
+}
+
+func TestMilvusHealthFailsOverEndpointList(t *testing.T) {
+	var hosts []string
+	client := &http.Client{Transport: vectorRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		hosts = append(hosts, r.URL.Host)
+		if r.URL.Host == "milvus-a.test:19530" {
+			return milvusTestJSONResponse(http.StatusServiceUnavailable, `{"code":1,"message":"down"}`), nil
+		}
+		return milvusTestJSONResponse(http.StatusOK, `{"code":0,"data":[]}`), nil
+	})}
+	store, err := NewMilvusVectorStore(MilvusVectorStoreConfig{
+		Endpoints:  []string{"http://milvus-a.test:19530", "http://milvus-b.test:19530"},
+		HTTPClient: client,
+	})
+	if err != nil {
+		t.Fatalf("NewMilvusVectorStore() error = %v", err)
+	}
+
+	if err := store.Health(context.Background()); err != nil {
+		t.Fatalf("Health() error = %v", err)
+	}
+	want := []string{"milvus-a.test:19530", "milvus-b.test:19530"}
+	if strings.Join(hosts, ",") != strings.Join(want, ",") {
+		t.Fatalf("hosts = %v, want %v", hosts, want)
 	}
 }
 
@@ -163,9 +265,9 @@ func TestMilvusVectorStoreMapsNotFoundHealth(t *testing.T) {
 		t.Fatalf("NewMilvusVectorStore() error = %v", err)
 	}
 
-	health, err := store.Health(context.Background(), ports.VectorCollectionRef{TenantID: "tenant-a", KBID: "missing"})
+	health, err := store.CollectionHealth(context.Background(), ports.VectorCollectionRef{TenantID: "tenant-a", KBID: "missing"})
 	if err != nil {
-		t.Fatalf("Health() error = %v", err)
+		t.Fatalf("CollectionHealth() error = %v", err)
 	}
 	if health.Ready || !strings.Contains(health.Reason, "collection not found") {
 		t.Fatalf("health = %#v, want not ready with reason", health)

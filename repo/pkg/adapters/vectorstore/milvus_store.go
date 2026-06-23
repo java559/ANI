@@ -11,7 +11,9 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/kubercloud/ani/pkg/adapters/resilience"
 	"github.com/kubercloud/ani/pkg/ports"
 )
 
@@ -23,37 +25,44 @@ var milvusCollectionSafePattern = regexp.MustCompile(`[^a-zA-Z0-9_]`)
 
 type MilvusVectorStoreConfig struct {
 	Endpoint         string
+	Endpoints        []string
 	Token            string
 	Database         string
 	CollectionPrefix string
 	HTTPClient       *http.Client
+	RequestTimeout   time.Duration
 }
 
 type MilvusVectorStore struct {
 	endpoint         *url.URL
+	endpoints        []*url.URL
 	token            string
 	database         string
 	collectionPrefix string
 	client           *http.Client
+	policy           resilience.Policy
 }
 
 var _ ports.VectorStore = (*MilvusVectorStore)(nil)
 
 func NewMilvusVectorStore(config MilvusVectorStoreConfig) (*MilvusVectorStore, error) {
-	endpoint, err := parseMilvusEndpoint(config.Endpoint)
+	endpoints, err := parseMilvusEndpoints(config.Endpoint, config.Endpoints)
 	if err != nil {
 		return nil, err
 	}
+	endpoint := endpoints[0]
 	client := config.HTTPClient
 	if client == nil {
 		client = http.DefaultClient
 	}
 	return &MilvusVectorStore{
 		endpoint:         endpoint,
+		endpoints:        endpoints,
 		token:            strings.TrimSpace(config.Token),
 		database:         strings.TrimSpace(config.Database),
 		collectionPrefix: strings.TrimSpace(config.CollectionPrefix),
 		client:           client,
+		policy:           resilience.Policy{Timeout: config.RequestTimeout},
 	}, nil
 }
 
@@ -134,7 +143,15 @@ func (s *MilvusVectorStore) Delete(ctx context.Context, ref ports.VectorCollecti
 	return s.doMilvus(ctx, "/v2/vectordb/entities/delete", body, nil, nil)
 }
 
-func (s *MilvusVectorStore) Health(ctx context.Context, ref ports.VectorCollectionRef) (ports.VectorCollectionHealth, error) {
+func (s *MilvusVectorStore) Health(ctx context.Context) error {
+	body := map[string]any{}
+	if s.database != "" {
+		body["dbName"] = s.database
+	}
+	return s.doMilvus(ctx, "/v2/vectordb/collections/list", body, nil, nil)
+}
+
+func (s *MilvusVectorStore) CollectionHealth(ctx context.Context, ref ports.VectorCollectionRef) (ports.VectorCollectionHealth, error) {
 	body := s.collectionPayload(ref)
 	var response milvusResponse
 	err := s.doMilvus(ctx, "/v2/vectordb/collections/describe", body, &response, nil)
@@ -160,7 +177,7 @@ func (s *MilvusVectorStore) doMilvus(ctx context.Context, path string, body map[
 	if s.token != "" {
 		req.Header.Set("Authorization", "Bearer "+s.token)
 	}
-	resp, err := s.client.Do(req)
+	resp, err := s.doRequest(req)
 	if err != nil {
 		return err
 	}
@@ -188,6 +205,59 @@ func (s *MilvusVectorStore) doMilvus(ctx context.Context, path string, body map[
 		*output = decoded
 	}
 	return nil
+}
+
+func (s *MilvusVectorStore) doRequest(req *http.Request) (*http.Response, error) {
+	var lastErr error
+	for index, endpoint := range s.endpoints {
+		candidate, err := requestForMilvusEndpoint(req, endpoint)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := s.doRequestOnce(candidate)
+		if err != nil {
+			lastErr = err
+			if index < len(s.endpoints)-1 && resilience.Retryable(err) {
+				continue
+			}
+			return nil, err
+		}
+		if index < len(s.endpoints)-1 && milvusRetryableStatus(resp.StatusCode) {
+			lastErr = milvusHTTPError(resp.StatusCode, "")
+			closeBody(resp.Body)
+			continue
+		}
+		return resp, nil
+	}
+	return nil, lastErr
+}
+
+func (s *MilvusVectorStore) doRequestOnce(req *http.Request) (*http.Response, error) {
+	var resp *http.Response
+	err := resilience.Do(req.Context(), s.policy, func(callCtx context.Context) error {
+		var err error
+		resp, err = s.client.Do(req.Clone(callCtx))
+		return err
+	})
+	return resp, err
+}
+
+func requestForMilvusEndpoint(req *http.Request, endpoint *url.URL) (*http.Request, error) {
+	candidate := req.Clone(req.Context())
+	target := *endpoint
+	target.Path = req.URL.Path
+	target.RawPath = ""
+	target.RawQuery = req.URL.RawQuery
+	candidate.URL = &target
+	candidate.Host = target.Host
+	if req.GetBody != nil {
+		body, err := req.GetBody()
+		if err != nil {
+			return nil, err
+		}
+		candidate.Body = body
+	}
+	return candidate, nil
 }
 
 func (s *MilvusVectorStore) collectionPayload(ref ports.VectorCollectionRef) map[string]any {
@@ -235,6 +305,38 @@ func parseMilvusEndpoint(raw string) (*url.URL, error) {
 	return parsed, nil
 }
 
+func parseMilvusEndpoints(primary string, values []string) ([]*url.URL, error) {
+	rawValues := append([]string{}, values...)
+	if strings.TrimSpace(primary) != "" {
+		rawValues = append([]string{primary}, rawValues...)
+	}
+	if len(rawValues) == 0 {
+		return nil, fmt.Errorf("%w: Milvus endpoint is required", ports.ErrInvalid)
+	}
+	endpoints := make([]*url.URL, 0, len(rawValues))
+	seen := map[string]struct{}{}
+	for _, raw := range rawValues {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		parsed, err := parseMilvusEndpoint(trimmed)
+		if err != nil {
+			return nil, err
+		}
+		key := parsed.String()
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		endpoints = append(endpoints, parsed)
+	}
+	if len(endpoints) == 0 {
+		return nil, fmt.Errorf("%w: Milvus endpoint is required", ports.ErrInvalid)
+	}
+	return endpoints, nil
+}
+
 type milvusResponse struct {
 	Code    int             `json:"code"`
 	Message string          `json:"message"`
@@ -273,6 +375,10 @@ func milvusHTTPError(statusCode int, body string) error {
 	default:
 		return fmt.Errorf("Milvus HTTP %d: %s", statusCode, strings.TrimSpace(body))
 	}
+}
+
+func milvusRetryableStatus(statusCode int) bool {
+	return statusCode == http.StatusTooManyRequests || statusCode >= 500
 }
 
 func milvusSearchResults(data json.RawMessage) []ports.VectorSearchResult {

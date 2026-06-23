@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kubercloud/ani/pkg/adapters/resilience"
 	"github.com/kubercloud/ani/pkg/ports"
 )
 
@@ -34,15 +35,19 @@ type KubernetesRESTClientConfig struct {
 	CAFile          string
 	FieldManager    string
 	HTTPClient      *http.Client
+	RequestTimeout  time.Duration
+	RetryPolicy     resilience.Policy
 	Now             func() time.Time
 }
 
 type KubernetesRESTClient struct {
-	host         string
-	bearerToken  string
-	fieldManager string
-	httpClient   *http.Client
-	now          func() time.Time
+	host             string
+	bearerToken      string
+	fieldManager     string
+	httpClient       *http.Client
+	policy           resilience.Policy
+	idempotentPolicy resilience.Policy
+	now              func() time.Time
 }
 
 func NewKubernetesRESTClient(config KubernetesRESTClientConfig) (*KubernetesRESTClient, error) {
@@ -76,13 +81,20 @@ func NewKubernetesRESTClient(config KubernetesRESTClientConfig) (*KubernetesREST
 	if fieldManager == "" {
 		fieldManager = "ani-workload-runtime"
 	}
+	timeoutPolicy := resilience.Policy{Timeout: config.RequestTimeout}
+	idempotentPolicy := config.RetryPolicy
+	if idempotentPolicy.Timeout <= 0 {
+		idempotentPolicy.Timeout = config.RequestTimeout
+	}
 
 	return &KubernetesRESTClient{
-		host:         host,
-		bearerToken:  bearerToken,
-		fieldManager: fieldManager,
-		httpClient:   client,
-		now:          now,
+		host:             host,
+		bearerToken:      bearerToken,
+		fieldManager:     fieldManager,
+		httpClient:       client,
+		policy:           timeoutPolicy,
+		idempotentPolicy: idempotentPolicy,
+		now:              now,
 	}, nil
 }
 
@@ -150,7 +162,7 @@ func (c *KubernetesRESTClient) ServerSideDryRun(ctx context.Context, manifests [
 			return ports.WorkloadProviderDryRunResult{}, err
 		}
 		query := "fieldManager=" + url.QueryEscape(c.fieldManager) + "&force=true&dryRun=All"
-		if _, err := c.do(ctx, http.MethodPatch, c.resourceURL(resource, query), kubernetesApplyPatchContentType, []byte(manifest.Content)); err != nil {
+		if _, err := c.doIdempotent(ctx, http.MethodPatch, c.resourceURL(resource, query), kubernetesApplyPatchContentType, []byte(manifest.Content)); err != nil {
 			return ports.WorkloadProviderDryRunResult{}, err
 		}
 	}
@@ -182,6 +194,11 @@ func (c *KubernetesRESTClient) Apply(ctx context.Context, request ports.Workload
 		Warnings:      request.DryRunResult.Warnings,
 		AppliedAt:     c.now().UTC(),
 	}, nil
+}
+
+func (c *KubernetesRESTClient) Health(ctx context.Context) error {
+	_, err := c.doIdempotent(ctx, http.MethodGet, c.host+"/version", "", nil)
+	return err
 }
 
 func (c *KubernetesRESTClient) ApplyManifests(ctx context.Context, manifests []ports.WorkloadManifest) ([]string, error) {
@@ -218,7 +235,7 @@ func (c *KubernetesRESTClient) ObserveNetworkResource(ctx context.Context, reque
 	if err != nil {
 		return ports.NetworkProviderStatusResult{}, err
 	}
-	body, err := c.do(ctx, http.MethodGet, c.resourceURL(resource, ""), "", nil)
+	body, err := c.doIdempotent(ctx, http.MethodGet, c.resourceURL(resource, ""), "", nil)
 	if err != nil {
 		return ports.NetworkProviderStatusResult{}, err
 	}
@@ -254,7 +271,7 @@ func (c *KubernetesRESTClient) ObserveStorageResource(ctx context.Context, reque
 	if err != nil {
 		return ports.StorageProviderStatusResult{}, err
 	}
-	body, err := c.do(ctx, http.MethodGet, c.resourceURL(resource, ""), "", nil)
+	body, err := c.doIdempotent(ctx, http.MethodGet, c.resourceURL(resource, ""), "", nil)
 	if err != nil {
 		return ports.StorageProviderStatusResult{}, err
 	}
@@ -290,7 +307,7 @@ func (c *KubernetesRESTClient) Observe(ctx context.Context, request ports.Worklo
 	if err != nil {
 		return ports.WorkloadProviderObservation{}, err
 	}
-	body, err := c.do(ctx, http.MethodGet, c.resourceURL(resource, ""), "", nil)
+	body, err := c.doIdempotent(ctx, http.MethodGet, c.resourceURL(resource, ""), "", nil)
 	if err != nil {
 		return ports.WorkloadProviderObservation{}, err
 	}
@@ -313,6 +330,24 @@ func (c *KubernetesRESTClient) Observe(ctx context.Context, request ports.Worklo
 }
 
 func (c *KubernetesRESTClient) do(ctx context.Context, method string, endpoint string, contentType string, body []byte) ([]byte, error) {
+	return c.doWithPolicy(ctx, c.policy, method, endpoint, contentType, body)
+}
+
+func (c *KubernetesRESTClient) doIdempotent(ctx context.Context, method string, endpoint string, contentType string, body []byte) ([]byte, error) {
+	return c.doWithPolicy(ctx, c.idempotentPolicy, method, endpoint, contentType, body)
+}
+
+func (c *KubernetesRESTClient) doWithPolicy(ctx context.Context, policy resilience.Policy, method string, endpoint string, contentType string, body []byte) ([]byte, error) {
+	var data []byte
+	err := resilience.Do(ctx, policy, func(callCtx context.Context) error {
+		var err error
+		data, err = c.doOnce(callCtx, method, endpoint, contentType, body)
+		return err
+	})
+	return data, err
+}
+
+func (c *KubernetesRESTClient) doOnce(ctx context.Context, method string, endpoint string, contentType string, body []byte) ([]byte, error) {
 	var reader io.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)
@@ -338,7 +373,11 @@ func (c *KubernetesRESTClient) do(ctx context.Context, method string, endpoint s
 		return nil, readErr
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("%w: Kubernetes API %s %s returned %d: %s", ports.ErrInvalid, method, req.URL.Path, resp.StatusCode, strings.TrimSpace(string(data)))
+		statusErr := resilience.NewStatusError("Kubernetes API", method, req.URL.Path, resp.StatusCode, string(data))
+		if resilience.Retryable(statusErr) {
+			return nil, statusErr
+		}
+		return nil, fmt.Errorf("%w: %v", ports.ErrInvalid, statusErr)
 	}
 	return data, nil
 }

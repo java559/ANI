@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/kubercloud/ani/pkg/adapters/objectstore"
 	runtimeadapter "github.com/kubercloud/ani/pkg/adapters/runtime"
@@ -24,8 +25,10 @@ type gatewayStorageRuntimeConfig struct {
 	KubernetesServiceAccountCAFile    string
 	KubernetesProviderManager         string
 	KubernetesHTTPClient              *http.Client
+	KubernetesRequestTimeout          time.Duration
 	ObjectStoreProvider               string
 	ObjectStoreEndpoint               string
+	ObjectStoreEndpoints              []string
 	ObjectStorePublicEndpoint         string
 	ObjectStoreAccessKeyID            string
 	ObjectStoreSecretAccessKey        string
@@ -34,6 +37,7 @@ type gatewayStorageRuntimeConfig struct {
 	ObjectStoreSecure                 bool
 	ObjectStoreBucketPrefix           string
 	ObjectStoreHTTPClient             *http.Client
+	ObjectStoreRequestTimeout         time.Duration
 }
 
 func gatewayStorageRuntimeConfigFromEnv() gatewayStorageRuntimeConfig {
@@ -49,8 +53,10 @@ func gatewayStorageRuntimeConfigFromEnv() gatewayStorageRuntimeConfig {
 		KubernetesServiceAccountTokenFile: os.Getenv("KUBERNETES_SERVICE_ACCOUNT_TOKEN_FILE"),
 		KubernetesServiceAccountCAFile:    os.Getenv("KUBERNETES_SERVICE_ACCOUNT_CA_FILE"),
 		KubernetesProviderManager:         os.Getenv("KUBERNETES_PROVIDER_FIELD_MANAGER"),
+		KubernetesRequestTimeout:          gatewayDurationFromEnv("KUBERNETES_REQUEST_TIMEOUT"),
 		ObjectStoreProvider:               os.Getenv("OBJECT_STORE_PROVIDER"),
 		ObjectStoreEndpoint:               os.Getenv("OBJECT_STORE_ENDPOINT"),
+		ObjectStoreEndpoints:              splitGatewayCSVEnv(os.Getenv("OBJECT_STORE_ENDPOINTS")),
 		ObjectStorePublicEndpoint:         os.Getenv("OBJECT_STORE_PUBLIC_ENDPOINT"),
 		ObjectStoreAccessKeyID:            os.Getenv("OBJECT_STORE_ACCESS_KEY_ID"),
 		ObjectStoreSecretAccessKey:        os.Getenv("OBJECT_STORE_SECRET_ACCESS_KEY"),
@@ -58,6 +64,7 @@ func gatewayStorageRuntimeConfigFromEnv() gatewayStorageRuntimeConfig {
 		ObjectStoreRegion:                 os.Getenv("OBJECT_STORE_REGION"),
 		ObjectStoreSecure:                 strings.EqualFold(strings.TrimSpace(os.Getenv("OBJECT_STORE_SECURE")), "true"),
 		ObjectStoreBucketPrefix:           os.Getenv("OBJECT_STORE_BUCKET_PREFIX"),
+		ObjectStoreRequestTimeout:         gatewayDurationFromEnv("OBJECT_STORE_REQUEST_TIMEOUT"),
 	}
 }
 
@@ -66,6 +73,7 @@ func newGatewayStorageService(cfg gatewayStorageRuntimeConfig) (ports.StorageSer
 	if strings.TrimSpace(cfg.ObjectStoreProvider) == "minio" {
 		store, err := objectstore.NewMinIOObjectStore(objectstore.MinIOObjectStoreConfig{
 			Endpoint:        cfg.ObjectStoreEndpoint,
+			Endpoints:       cfg.ObjectStoreEndpoints,
 			PublicEndpoint:  cfg.ObjectStorePublicEndpoint,
 			AccessKeyID:     cfg.ObjectStoreAccessKeyID,
 			SecretAccessKey: cfg.ObjectStoreSecretAccessKey,
@@ -74,6 +82,7 @@ func newGatewayStorageService(cfg gatewayStorageRuntimeConfig) (ports.StorageSer
 			Secure:          cfg.ObjectStoreSecure,
 			BucketPrefix:    cfg.ObjectStoreBucketPrefix,
 			HTTPClient:      cfg.ObjectStoreHTTPClient,
+			RequestTimeout:  cfg.ObjectStoreRequestTimeout,
 		})
 		if err != nil {
 			return nil, err
@@ -100,6 +109,7 @@ func newGatewayStorageService(cfg gatewayStorageRuntimeConfig) (ports.StorageSer
 			CAFile:          cfg.KubernetesServiceAccountCAFile,
 			FieldManager:    cfg.KubernetesProviderManager,
 			HTTPClient:      cfg.KubernetesHTTPClient,
+			RequestTimeout:  cfg.KubernetesRequestTimeout,
 		})
 		if err != nil {
 			return nil, err

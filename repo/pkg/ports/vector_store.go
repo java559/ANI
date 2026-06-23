@@ -103,11 +103,12 @@ type VectorCollectionHealth struct {
 }
 
 type VectorStore interface {
+	Health(ctx context.Context) error
 	EnsureCollection(ctx context.Context, ref VectorCollectionRef, dimension int) error
 	Upsert(ctx context.Context, ref VectorCollectionRef, records []VectorRecord) error
 	Search(ctx context.Context, query VectorSearchQuery) ([]VectorSearchResult, error)
 	Delete(ctx context.Context, ref VectorCollectionRef, ids []string) error
-	Health(ctx context.Context, ref VectorCollectionRef) (VectorCollectionHealth, error)
+	CollectionHealth(ctx context.Context, ref VectorCollectionRef) (VectorCollectionHealth, error)
 }
 
 type VectorStoreService interface {

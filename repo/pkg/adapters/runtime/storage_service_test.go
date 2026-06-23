@@ -321,6 +321,10 @@ func (s *fakeObjectStore) EnsureBucket(_ context.Context, class ports.BucketClas
 	return nil
 }
 
+func (s *fakeObjectStore) Health(context.Context) error {
+	return nil
+}
+
 func (s *fakeObjectStore) PutObject(context.Context, ports.PutObjectInput) (ports.ObjectMetadata, error) {
 	return ports.ObjectMetadata{}, ports.ErrUnsupported
 }

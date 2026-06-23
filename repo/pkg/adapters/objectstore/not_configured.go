@@ -12,6 +12,10 @@ type NotConfigured struct{}
 
 var _ ports.ObjectStore = NotConfigured{}
 
+func (NotConfigured) Health(context.Context) error {
+	return ports.ErrNotConfigured
+}
+
 func (NotConfigured) EnsureBucket(context.Context, ports.BucketClass) error {
 	return ports.ErrNotConfigured
 }

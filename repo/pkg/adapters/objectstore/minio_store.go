@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kubercloud/ani/pkg/adapters/resilience"
 	"github.com/kubercloud/ani/pkg/ports"
 )
 
@@ -29,6 +30,7 @@ var s3BucketNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$
 
 type MinIOObjectStoreConfig struct {
 	Endpoint        string
+	Endpoints       []string
 	PublicEndpoint  string
 	AccessKeyID     string
 	SecretAccessKey string
@@ -37,11 +39,13 @@ type MinIOObjectStoreConfig struct {
 	Secure          bool
 	BucketPrefix    string
 	HTTPClient      *http.Client
+	RequestTimeout  time.Duration
 	Now             func() time.Time
 }
 
 type MinIOObjectStore struct {
 	endpoint        *url.URL
+	endpoints       []*url.URL
 	publicEndpoint  *url.URL
 	accessKeyID     string
 	secretAccessKey string
@@ -49,16 +53,18 @@ type MinIOObjectStore struct {
 	region          string
 	bucketPrefix    string
 	client          *http.Client
+	policy          resilience.Policy
 	now             func() time.Time
 }
 
 var _ ports.ObjectStore = (*MinIOObjectStore)(nil)
 
 func NewMinIOObjectStore(config MinIOObjectStoreConfig) (*MinIOObjectStore, error) {
-	endpoint, err := parseMinIOEndpoint(config.Endpoint, config.Secure)
+	endpoints, err := parseMinIOEndpoints(config.Endpoint, config.Endpoints, config.Secure)
 	if err != nil {
 		return nil, err
 	}
+	endpoint := endpoints[0]
 	publicEndpoint := endpoint
 	if strings.TrimSpace(config.PublicEndpoint) != "" {
 		publicEndpoint, err = parseMinIOEndpoint(config.PublicEndpoint, config.Secure)
@@ -85,6 +91,7 @@ func NewMinIOObjectStore(config MinIOObjectStoreConfig) (*MinIOObjectStore, erro
 	}
 	return &MinIOObjectStore{
 		endpoint:        endpoint,
+		endpoints:       endpoints,
 		publicEndpoint:  publicEndpoint,
 		accessKeyID:     accessKeyID,
 		secretAccessKey: secretAccessKey,
@@ -92,8 +99,29 @@ func NewMinIOObjectStore(config MinIOObjectStoreConfig) (*MinIOObjectStore, erro
 		region:          region,
 		bucketPrefix:    strings.TrimSpace(config.BucketPrefix),
 		client:          client,
+		policy:          resilience.Policy{Timeout: config.RequestTimeout},
 		now:             now,
 	}, nil
+}
+
+func (s *MinIOObjectStore) Health(ctx context.Context) error {
+	target := *s.endpoint
+	target.Path = "/"
+	target.RawPath = ""
+	target.RawQuery = ""
+	req, err := s.newSignedRequest(ctx, http.MethodGet, target, nil, "")
+	if err != nil {
+		return err
+	}
+	resp, err := s.doRequest(req)
+	if err != nil {
+		return err
+	}
+	defer closeBody(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return minIOHTTPError(resp.StatusCode, "health")
+	}
+	return nil
 }
 
 func (s *MinIOObjectStore) EnsureBucket(ctx context.Context, class ports.BucketClass) error {
@@ -105,7 +133,7 @@ func (s *MinIOObjectStore) EnsureBucket(ctx context.Context, class ports.BucketC
 	if err != nil {
 		return err
 	}
-	headResp, err := s.client.Do(headReq)
+	headResp, err := s.doRequest(headReq)
 	if err != nil {
 		return err
 	}
@@ -121,7 +149,7 @@ func (s *MinIOObjectStore) EnsureBucket(ctx context.Context, class ports.BucketC
 	if err != nil {
 		return err
 	}
-	putResp, err := s.client.Do(putReq)
+	putResp, err := s.doRequest(putReq)
 	if err != nil {
 		return err
 	}
@@ -152,7 +180,7 @@ func (s *MinIOObjectStore) PutObject(ctx context.Context, input ports.PutObjectI
 	if contentType := strings.TrimSpace(input.ContentType); contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
-	resp, err := s.client.Do(req)
+	resp, err := s.doRequest(req)
 	if err != nil {
 		return ports.ObjectMetadata{}, err
 	}
@@ -178,7 +206,7 @@ func (s *MinIOObjectStore) GetObject(ctx context.Context, ref ports.ObjectRef) (
 	if err != nil {
 		return nil, ports.ObjectMetadata{}, err
 	}
-	resp, err := s.client.Do(req)
+	resp, err := s.doRequest(req)
 	if err != nil {
 		return nil, ports.ObjectMetadata{}, err
 	}
@@ -198,7 +226,7 @@ func (s *MinIOObjectStore) DeleteObject(ctx context.Context, ref ports.ObjectRef
 	if err != nil {
 		return err
 	}
-	resp, err := s.client.Do(req)
+	resp, err := s.doRequest(req)
 	if err != nil {
 		return err
 	}
@@ -221,7 +249,7 @@ func (s *MinIOObjectStore) StatObject(ctx context.Context, ref ports.ObjectRef) 
 	if err != nil {
 		return ports.ObjectMetadata{}, err
 	}
-	resp, err := s.client.Do(req)
+	resp, err := s.doRequest(req)
 	if err != nil {
 		return ports.ObjectMetadata{}, err
 	}
@@ -302,6 +330,64 @@ func (s *MinIOObjectStore) newSignedRequest(ctx context.Context, method string, 
 	return req, nil
 }
 
+func (s *MinIOObjectStore) doRequest(req *http.Request) (*http.Response, error) {
+	var lastErr error
+	for index, endpoint := range s.endpoints {
+		candidate, err := s.requestForEndpoint(req, endpoint)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := s.doRequestOnce(candidate)
+		if err != nil {
+			lastErr = err
+			if index < len(s.endpoints)-1 && resilience.Retryable(err) {
+				continue
+			}
+			return nil, err
+		}
+		if index < len(s.endpoints)-1 && minIORetryableStatus(resp.StatusCode) {
+			lastErr = minIOHTTPError(resp.StatusCode, strings.TrimSpace(req.Method+" "+req.URL.Path))
+			closeBody(resp.Body)
+			continue
+		}
+		return resp, nil
+	}
+	return nil, lastErr
+}
+
+func (s *MinIOObjectStore) doRequestOnce(req *http.Request) (*http.Response, error) {
+	var resp *http.Response
+	err := resilience.Do(req.Context(), s.policy, func(callCtx context.Context) error {
+		var err error
+		resp, err = s.client.Do(req.Clone(callCtx))
+		return err
+	})
+	return resp, err
+}
+
+func (s *MinIOObjectStore) requestForEndpoint(req *http.Request, endpoint *url.URL) (*http.Request, error) {
+	candidate := req.Clone(req.Context())
+	target := *endpoint
+	target.Path = req.URL.Path
+	target.RawPath = req.URL.RawPath
+	target.RawQuery = req.URL.RawQuery
+	candidate.URL = &target
+	candidate.Host = target.Host
+	if req.GetBody != nil {
+		body, err := req.GetBody()
+		if err != nil {
+			return nil, err
+		}
+		candidate.Body = body
+	}
+	payloadHash := candidate.Header.Get("X-Amz-Content-Sha256")
+	now := s.now().UTC()
+	candidate.Header.Set("X-Amz-Date", now.Format("20060102T150405Z"))
+	candidate.Header.Del("Authorization")
+	s.signRequest(candidate, now, payloadHash)
+	return candidate, nil
+}
+
 func (s *MinIOObjectStore) signRequest(req *http.Request, now time.Time, payloadHash string) {
 	signedHeaders := []string{"host", "x-amz-content-sha256", "x-amz-date"}
 	if s.sessionToken != "" {
@@ -312,6 +398,9 @@ func (s *MinIOObjectStore) signRequest(req *http.Request, now time.Time, payload
 	var canonicalHeaders strings.Builder
 	for _, header := range signedHeaders {
 		value := req.Host
+		if value == "" && req.URL != nil {
+			value = req.URL.Host
+		}
 		if header != "host" {
 			value = req.Header.Get(http.CanonicalHeaderKey(header))
 		}
@@ -442,6 +531,38 @@ func parseMinIOEndpoint(raw string, secure bool) (*url.URL, error) {
 	return parsed, nil
 }
 
+func parseMinIOEndpoints(primary string, values []string, secure bool) ([]*url.URL, error) {
+	rawValues := append([]string{}, values...)
+	if strings.TrimSpace(primary) != "" {
+		rawValues = append([]string{primary}, rawValues...)
+	}
+	if len(rawValues) == 0 {
+		return nil, fmt.Errorf("%w: MinIO endpoint is required", ports.ErrInvalid)
+	}
+	endpoints := make([]*url.URL, 0, len(rawValues))
+	seen := map[string]struct{}{}
+	for _, raw := range rawValues {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		parsed, err := parseMinIOEndpoint(trimmed, secure)
+		if err != nil {
+			return nil, err
+		}
+		key := parsed.String()
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		endpoints = append(endpoints, parsed)
+	}
+	if len(endpoints) == 0 {
+		return nil, fmt.Errorf("%w: MinIO endpoint is required", ports.ErrInvalid)
+	}
+	return endpoints, nil
+}
+
 func minIOHTTPError(statusCode int, operation string) error {
 	switch statusCode {
 	case http.StatusNotFound:
@@ -453,6 +574,10 @@ func minIOHTTPError(statusCode int, operation string) error {
 	default:
 		return fmt.Errorf("MinIO %s returned HTTP %d", operation, statusCode)
 	}
+}
+
+func minIORetryableStatus(statusCode int) bool {
+	return statusCode == http.StatusTooManyRequests || statusCode >= 500
 }
 
 func canonicalQuery(values url.Values) string {

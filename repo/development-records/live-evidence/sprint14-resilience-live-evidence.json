@@ -1,0 +1,198 @@
+{
+  "id": "sprint14-resilience-live-gate",
+  "namespace": "ani-sprint14-resilience",
+  "p0": {
+    "baseline_readyz": {
+      "checks": {
+        "kubernetes-api": {
+          "latency_ms": 0,
+          "status": "ok"
+        },
+        "nats": {
+          "latency_ms": 0,
+          "status": "ok"
+        },
+        "object-store": {
+          "latency_ms": 13,
+          "status": "ok"
+        },
+        "postgres": {
+          "latency_ms": 0,
+          "status": "ok"
+        },
+        "redis": {
+          "latency_ms": 3,
+          "status": "ok"
+        },
+        "vector-store": {
+          "latency_ms": 0,
+          "status": "ok"
+        }
+      },
+      "http_status": 200,
+      "raw": "{\"status\":\"ok\",\"checks\":{\"kubernetes-api\":{\"status\":\"ok\",\"latency_ms\":0},\"nats\":{\"status\":\"ok\",\"latency_ms\":0},\"object-store\":{\"status\":\"ok\",\"latency_ms\":13},\"p",
+      "status": "ok"
+    },
+    "strong_dependency_kill": {
+      "deleted_pod": "sprint14-redis-876d64756-jsr25",
+      "dependency": "redis",
+      "observed_readyz": {
+        "http_status": 503,
+        "raw": "Error from server (ServiceUnavailable): the server is currently unable to handle the request"
+      },
+      "recovery_readyz": {
+        "checks": {
+          "kubernetes-api": {
+            "latency_ms": 0,
+            "status": "ok"
+          },
+          "nats": {
+            "latency_ms": 0,
+            "status": "ok"
+          },
+          "object-store": {
+            "latency_ms": 6,
+            "status": "ok"
+          },
+          "postgres": {
+            "latency_ms": 0,
+            "status": "ok"
+          },
+          "redis": {
+            "latency_ms": 9,
+            "status": "ok"
+          },
+          "vector-store": {
+            "latency_ms": 0,
+            "status": "ok"
+          }
+        },
+        "http_status": 200,
+        "raw": "{\"status\":\"ok\",\"checks\":{\"kubernetes-api\":{\"status\":\"ok\",\"latency_ms\":0},\"nats\":{\"status\":\"ok\",\"latency_ms\":0},\"object-store\":{\"status\":\"ok\",\"latency_ms\":6},\"po",
+        "status": "ok"
+      }
+    }
+  },
+  "p1": {
+    "weak_dependency_kill": {
+      "deleted_pod": "sprint14-minio-68ff7ffffb-5pvq8",
+      "dependency": "object-store",
+      "observed_readyz": {
+        "checks": {
+          "kubernetes-api": {
+            "latency_ms": 0,
+            "status": "ok"
+          },
+          "nats": {
+            "latency_ms": 0,
+            "status": "ok"
+          },
+          "object-store": {
+            "error": "Get \"<redacted-endpoint>/\": dial tcp <redacted-endpoint>: connect: no route to host",
+            "latency_ms": 19,
+            "status": "degraded"
+          },
+          "postgres": {
+            "latency_ms": 0,
+            "status": "ok"
+          },
+          "redis": {
+            "latency_ms": 2,
+            "status": "ok"
+          },
+          "vector-store": {
+            "latency_ms": 0,
+            "status": "ok"
+          }
+        },
+        "http_status": 200,
+        "raw": "{\"status\":\"degraded\",\"checks\":{\"kubernetes-api\":{\"status\":\"ok\",\"latency_ms\":0},\"nats\":{\"status\":\"ok\",\"latency_ms\":0},\"object-store\":{\"status\":\"degraded\",\"latenc",
+        "status": "degraded"
+      },
+      "recovery_readyz": {
+        "checks": {
+          "kubernetes-api": {
+            "latency_ms": 0,
+            "status": "ok"
+          },
+          "nats": {
+            "latency_ms": 0,
+            "status": "ok"
+          },
+          "object-store": {
+            "latency_ms": 12,
+            "status": "ok"
+          },
+          "postgres": {
+            "latency_ms": 0,
+            "status": "ok"
+          },
+          "redis": {
+            "latency_ms": 2,
+            "status": "ok"
+          },
+          "vector-store": {
+            "latency_ms": 0,
+            "status": "ok"
+          }
+        },
+        "http_status": 200,
+        "raw": "{\"status\":\"ok\",\"checks\":{\"kubernetes-api\":{\"status\":\"ok\",\"latency_ms\":0},\"nats\":{\"status\":\"ok\",\"latency_ms\":0},\"object-store\":{\"status\":\"ok\",\"latency_ms\":12},\"p",
+        "status": "ok"
+      }
+    }
+  },
+  "p2": {
+    "deleted_primary_pod": "sprint14-worker-b-6c86fdbc4d-5cqdb",
+    "final_readyz": {
+      "checks": {
+        "kubernetes-api": {
+          "latency_ms": 0,
+          "status": "ok"
+        },
+        "nats": {
+          "latency_ms": 0,
+          "status": "ok"
+        },
+        "object-store": {
+          "latency_ms": 6,
+          "status": "ok"
+        },
+        "postgres": {
+          "latency_ms": 0,
+          "status": "ok"
+        },
+        "redis": {
+          "latency_ms": 0,
+          "status": "ok"
+        },
+        "vector-store": {
+          "latency_ms": 0,
+          "status": "ok"
+        }
+      },
+      "http_status": 200,
+      "raw": "{\"status\":\"ok\",\"checks\":{\"kubernetes-api\":{\"status\":\"ok\",\"latency_ms\":0},\"nats\":{\"status\":\"ok\",\"latency_ms\":0},\"object-store\":{\"status\":\"ok\",\"latency_ms\":6},\"po",
+      "status": "ok"
+    },
+    "initial_primary": "worker-b",
+    "new_primary": "worker-a"
+  },
+  "production_ready_scope": {
+    "limitations": [
+      "does_not_claim_existing_sprint13_single_replica_backends_are_intrinsically_ha",
+      "does_not_claim Redis/Postgres/MinIO/Milvus production operator topology is complete"
+    ],
+    "proof_items": [
+      "isolated_sprint14_fixture",
+      "real_backend_kill_observed",
+      "weak_dependency_degraded_observed",
+      "controller_primary_kill_failover_observed",
+      "readyz_recovered_after_faults"
+    ],
+    "scope": "isolated Sprint14 Core resilience fixture",
+    "status": "passed"
+  },
+  "profile": "SPRINT14-CORE-RESILIENCE-LIVE-GATE",
+  "status": "passed"
+}

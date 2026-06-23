@@ -75,6 +75,10 @@ func NewLocalK8sClusterService(options ...K8sClusterServiceOption) ports.K8sClus
 	return service
 }
 
+func (s *localK8sClusterService) Health(context.Context) error {
+	return nil
+}
+
 func (s *localK8sClusterService) CreateCluster(ctx context.Context, req ports.K8sClusterCreateRequest) (ports.K8sClusterRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

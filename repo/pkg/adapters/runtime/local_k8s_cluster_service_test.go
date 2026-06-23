@@ -59,6 +59,14 @@ func TestLocalK8sClusterServiceAppliesVClusterProviderAndRegistersProxyTarget(t 
 	}
 }
 
+func TestLocalK8sClusterServiceHealth(t *testing.T) {
+	service := NewLocalK8sClusterService()
+
+	if err := service.Health(context.Background()); err != nil {
+		t.Fatalf("Health() error = %v", err)
+	}
+}
+
 func TestLocalK8sClusterServiceGetsProviderKubeconfigForRealVCluster(t *testing.T) {
 	provider := &fakeK8sClusterProvider{
 		applyResult: ports.K8sClusterProviderApplyResult{
