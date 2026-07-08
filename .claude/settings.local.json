@@ -10,7 +10,10 @@
       "Bash(git commit -m ' *)",
       "Bash(make validate-doc-entrypoints *)",
       "Bash(echo \"Exit: $?\")",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(go build *)",
+      "Bash(go vet *)",
+      "Bash(gh issue *)"
     ]
   }
 }

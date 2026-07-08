@@ -54,6 +54,17 @@ Sprint 13 production-shaped live gate 摘要：
 - S07 Prometheus + kubelet / K8s API observability：SPRINT13-INSTANCE-OBSERVABILITY-PROMETHEUS-A-TRACK；validate-instance-observability-live-gate；LIVE PENDING 仅作历史门禁兼容语境；production_shape.status=passed。
 - S05-S07 B 轨可以继续：保留为历史兼容 token；截至 2026-06-21，S05/S06/S07 均已 passed。
 
+Sprint 13 Gateway real provider 代码链路接入：
+- GATEWAY-INSTANCE-CREATE-REAL-K8S-PROVIDER-A：Gateway 实例创建链路接入 real K8s provider；新增 `bootstrap.ConnectInstanceService` helper 让 Gateway 间接使用 real K8s provider 不违反组件边界守卫；`WORKLOAD_PROVIDER=kubernetes_rest` + `DATABASE_URL` 切换到 real `InstanceService`，未设置/`local` 回退 local 闭环保持 `CORE-DEV-PROFILE-A`；不修改 OpenAPI `v1.yaml`；`make validate-architecture` 通过；真实 K8s 可见性需 live gate 验证。
+
+Sprint 15 Console Instance Observability 交付摘要：
+- 统一实例可观测性 PRD 对应 11 个 issue 全部完成并 note-it（2026-07-03 ~ 2026-07-08）。
+- Core 端：CORE-CONSOLE-SESSION-HANDLER-A（#001）补全 VM console session handler；CORE-INSTANCE-METRICS-MULTI-EXPORTER-A（#002）多 exporter 聚合 adapter + `GET /observability/query_range` 端点；GATEWAY-INSTANCE-CREATE-REAL-K8S-PROVIDER-A（#011）Gateway real K8s provider 链路接入 + lazy re-observe。
+- Console UI 端：#003 路由壳层 + 实例上下文、#004 日志 Tab、#005 事件 Tab、#006 指标 Tab（双通道）、#007 终端 Tab、#008 控制台 Tab、#009 安全事件 Tab、#010 浏览器验证收口。
+- 覆盖 9 种计算实例 kind（vm/container/gpu_container/sandbox/batch_job/notebook/k8s_cluster/bare_metal/dpu_node）的日志、事件、指标、终端/console、安全事件能力。
+- 关键边界：cursor 分页 blocked-by-core（events/security-events query 缺 cursor 入参，降级为一次性加载）；后端 WebSocket exec 服务端未实现（SPEC §11.2 已知边界）。
+- 详细批次索引见 `repo/development-records/README.md`「Console Instance Observability UI（2026-07）」章节。
+
 Sprint 14 Core resilience 分支完成状态：
 - 分支：`feature/sprint14-core-resilience-semantics`。
 - 目标：把 Core 运行期韧性从 local/logic verified 推进到隔离真实 lab 可验证，包括 P0 限流/幂等/超时/readyz、P1 重试/断路/strong-vs-weak 降级、P2 多端点配置与 controller primary failover。
@@ -81,6 +92,7 @@ Sprint 14 Core resilience 分支完成状态：
 | Sprint 12 ⭐ | ✅ Core-only 已完成 | 2026-06-19 | Core「Services 支撑 Handler」收口：19 个 handler + 2 个 422 均关联 `api/openapi/v1.yaml` operationId、`pkg/ports`、`pkg/adapters`、Gateway handler；契约改动见 [`repo/api/core-contract-changelog-sprint12-13.md`](repo/api/core-contract-changelog-sprint12-13.md)；仅 Tier1 local profile，不代表 runtime/production ready |
 | Sprint 13 ⭐ | 🔄 收敛中（S01–S07 production-shaped gate passed） | 2026-06-19 起 | 真实 provider / live gate 收敛：S01 Kube-OVN、S02 vCluster、S03 Rook-Ceph（`SPRINT13-STORAGE-ROOK-CEPH-A-TRACK` / `validate-storage-live-gate`）、S04 NVIDIA device-plugin/DCGM（`SPRINT13-GPU-INVENTORY-DCGM-A-TRACK` / `validate-gpu-inventory-live-gate`）、S05 MinIO、S06 Milvus、S07 Prometheus observability 均 `production_shape.status=passed` 并归档 evidence。`SPRINT13-INSTANCE-OBSERVABILITY-PROMETHEUS-A-TRACK` / `validate-instance-observability-live-gate` 固定 Prometheus + kubelet contract；历史 LIVE PENDING token 仅作门禁兼容语境；计划见 `repo/development-records/sprint13-real-provider-readiness-plan.md`；production-shaped passed ≠ full platform production ready |
 | Sprint 14 ⭐ | ✅ Core resilience feature branch complete | 2026-06-23 | Core 韧性与服务语义：R-P0-0..R-P2-7 已完成，覆盖 gateway shared store、限流、幂等重放、adapter per-call timeout、data-plane readyz、retry/circuit breaker foundation、strong/weak degradation、多端点 failover config；`SPRINT14-CORE-RESILIENCE-LIVE-GATE` / `validate-sprint14-resilience-live-gate` 已在隔离 namespace 跑通 P0/P1/P2 真实故障注入与 failover，并归档脱敏 evidence。production-ready 范围仅限隔离 Sprint14 Core resilience fixture |
+| Sprint 15 ⭐ | ✅ Console Instance Observability 交付完成 | 2026-07-08 | 统一实例可观测性 PRD 11 个 issue 全部完成：Core 端 console session handler、多 exporter 聚合 adapter + range query 端点、Gateway real K8s provider 链路接入；Console UI 端路由壳层 + 日志/事件/指标/终端/控制台/安全事件 6 个 Tab 组件 + 浏览器验证收口；覆盖 9 种计算实例 kind；详细批次索引见 `repo/development-records/README.md` |
 
 ### Core 与外部 Services 团队的协作门禁
 
@@ -622,6 +634,29 @@ make validate-architecture
 make validate-doc-entrypoints
 git diff --check
 ```
+
+### Sprint 15：Console Instance Observability（✅ 已完成，2026-07-08）
+
+**主题：** 统一实例可观测性 PRD（`repo/services/tasks/modules/prd/console/compute/prd-console-instance-observability.md`）对应的 11 个 issue 全部完成。覆盖 Core 端 handler 补齐、Console UI 6 个 Tab 组件实现和 Gateway real K8s provider 链路接入，对应 9 种计算实例 kind 的日志、事件、指标、终端/console 和安全事件能力。
+
+**Core 端实现：**
+- `CORE-CONSOLE-SESSION-HANDLER-A`（Issue #001，2026-07-03）：VM console session handler 补全；新增 `CreateConsoleSession` port 方法 + Local/Prometheus adapter + 5 个 HTTP 测试。
+- `CORE-INSTANCE-METRICS-MULTI-EXPORTER-A`（Issue #002，2026-07-06，增量 2026-07-08）：多 exporter 聚合 adapter + `GET /observability/query_range` 端点；通过 `InstanceObservationGetRequest.Kind` 路由 GPU 采集；逐字段降级；PromQL label 重写；NaN/Inf 过滤。
+- `GATEWAY-INSTANCE-CREATE-REAL-K8S-PROVIDER-A`（Issue #011，2026-07-08）：Gateway 实例创建链路接入 real K8s provider；新增 `bootstrap.ConnectInstanceService` helper；lazy re-observe；Workload Identity Secret manifest 生成；auth.go 注入 `types.TenantContext`。
+
+**Console UI 端实现：**
+- `CONSOLE-INSTANCE-OBSERVABILITY-SHELL-A`（#003）：路由壳层 + 实例上下文 Provider + kind→Tab 映射。
+- `CONSOLE-INSTANCE-OBSERVABILITY-LOGS-A`（#004）：日志 Tab，`useInfiniteQuery` cursor 分页。
+- `CONSOLE-INSTANCE-OBSERVABILITY-EVENTS-A`（#005）：事件 Tab，cursor 分页 blocked-by-core 降级为一次性加载。
+- `CONSOLE-INSTANCE-OBSERVABILITY-METRICS-A`（#006）：指标 Tab 双通道（快照+时序），后改为 range query。
+- `CONSOLE-INSTANCE-OBSERVABILITY-TERMINAL-A`（#007）：终端 Tab（exec），WebSocket + xterm.js，5 态状态机。
+- `CONSOLE-INSTANCE-OBSERVABILITY-CONSOLE-A`（#008）：控制台 Tab（VM console/VNC），3 态状态机。
+- `CONSOLE-INSTANCE-OBSERVABILITY-SECURITY-EVENTS-A`（#009）：安全事件 Tab（仅 sandbox）。
+- `CONSOLE-INSTANCE-OBSERVABILITY-BROWSER-VERIFICATION-A`（#010）：验证收口批次（verification-only）。
+
+**关键边界：** cursor 分页 blocked-by-core（events/security-events query 缺 cursor 入参，降级为一次性加载）；后端 WebSocket exec 服务端未实现（SPEC §11.2 已知边界，归后续 Core 批次）；指标双通道采用快照（`getInstanceMetrics`）+ 时序（`/observability/query_range` PromQL 代理返回 matrix）。
+
+**关联记录：** 批次索引见 [`repo/development-records/README.md`](repo/development-records/README.md)「Console Instance Observability UI（2026-07）」和「Core Gateway Real Provider Integration（2026-07）」章节；当前冲刺状态见 [`repo/CURRENT-SPRINT.md`](repo/CURRENT-SPRINT.md) Sprint 15 章节。
 
 ---
 

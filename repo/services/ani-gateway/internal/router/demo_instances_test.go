@@ -1,13 +1,20 @@
 package router
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
+	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/cloudwego/hertz/pkg/app"
+	"github.com/cloudwego/hertz/pkg/app/server"
+	"github.com/cloudwego/hertz/pkg/common/ut"
 	"github.com/kubercloud/ani/pkg/ports"
 )
 
@@ -35,8 +42,10 @@ func TestDemoInstanceServiceCreatesVMContainerAndGPUContainer(t *testing.T) {
 		if result.FinalStatus.State != ports.WorkloadStateRunning {
 			t.Fatalf("Create(%s) state = %s, want running", kind, result.FinalStatus.State)
 		}
-		if len(result.Manifests) != 1 {
-			t.Fatalf("Create(%s) manifests = %d, want 1", kind, len(result.Manifests))
+		// The local orchestrator auto-binds a workload identity, so the renderer
+		// emits the primary workload manifest plus a workload-identity Secret.
+		if got, want := len(result.Manifests), 2; got != want {
+			t.Fatalf("Create(%s) manifests = %d, want %d", kind, got, want)
 		}
 		record, err := api.service.Get(context.Background(), ports.WorkloadInstanceGetRequest{
 			TenantID:   result.Ref.TenantID,
@@ -422,7 +431,7 @@ func TestDemoInstanceObservabilityResponsesUseLocalProfile(t *testing.T) {
 }
 
 func TestDemoInstanceObservabilityCanUseInstanceNameForProviderTarget(t *testing.T) {
-	api := newDemoInstanceAPIWithObservability(nil, true)
+	api := newDemoInstanceAPIWithObservability(nil, true, nil)
 	spec, err := demoSpecFromRequest(demoCreateInstanceRequest{Kind: "container", Name: "s07-observability-live"}, "tenant-a")
 	if err != nil {
 		t.Fatalf("demoSpecFromRequest error = %v", err)
@@ -448,7 +457,7 @@ func TestDemoInstanceObservabilityCanUseInstanceNameForProviderTarget(t *testing
 		t.Fatalf("observability target = %q, want instance name", got)
 	}
 
-	localAPI := newDemoInstanceAPIWithObservability(nil, false)
+	localAPI := newDemoInstanceAPIWithObservability(nil, false, nil)
 	if got := localAPI.observabilityTargetID(record); got != created.Ref.InstanceID {
 		t.Fatalf("local observability target = %q, want instance id %q", got, created.Ref.InstanceID)
 	}
@@ -574,6 +583,10 @@ func TestDemoInstanceServiceVMVolumeBinding(t *testing.T) {
 }
 
 func TestDemoInstanceServiceRealShellExecutesCommand(t *testing.T) {
+	shell := firstNonEmpty(os.Getenv("ANI_DEMO_SHELL"), "/bin/sh")
+	if _, err := exec.LookPath(shell); err != nil {
+		t.Skipf("demo shell %q not available on %s: %v", shell, runtime.GOOS, err)
+	}
 	record := ports.WorkloadInstanceRecord{
 		TenantID:   "tenant-a",
 		InstanceID: "instance-shell",
@@ -592,4 +605,166 @@ func TestDemoInstanceServiceRealShellExecutesCommand(t *testing.T) {
 	if result.CWD == "" {
 		t.Fatalf("CWD is empty")
 	}
+}
+
+// newDemoConsoleEngine builds a Hertz engine with the demo instance routes and
+// a tenant-context middleware so createConsoleSession handler tests can issue
+// real HTTP requests. It creates a running vm instance via HTTP and returns the
+// engine plus the created instance id.
+func newDemoConsoleEngine(t *testing.T, denyScope bool) (*server.Hertz, string) {
+	t.Helper()
+	h := server.New()
+	h.Use(func(ctx context.Context, c *app.RequestContext) {
+		if denyScope {
+			writeDemoError(c, http.StatusForbidden, "FORBIDDEN", "permission denied")
+			c.Abort()
+			return
+		}
+		c.Set("tenant_id", "tenant-a")
+		c.Set("user_id", "user-a")
+		c.Next(ctx)
+	})
+	registerDemoInstancesWithObservability(h.Group("/api/v1"), nil, false, nil)
+	if denyScope {
+		return h, "irrelevant"
+	}
+	createBody := `{"kind":"vm","name":"demo-vm-console","idempotency_key":"create-vm-console"}`
+	createResp := ut.PerformRequest(h.Engine, http.MethodPost, "/api/v1/instances",
+		&ut.Body{Body: bytes.NewBufferString(createBody), Len: len(createBody)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	).Result()
+	if createResp.StatusCode() != http.StatusCreated {
+		t.Fatalf("create vm status = %d, want 201; body=%s", createResp.StatusCode(), createResp.Body())
+	}
+	instanceID := extractInstanceID(string(createResp.Body()))
+	if instanceID == "" {
+		t.Fatalf("could not extract instance id from %s", createResp.Body())
+	}
+	return h, instanceID
+}
+
+func TestCreateConsoleSessionSuccessReturns200(t *testing.T) {
+	h, instanceID := newDemoConsoleEngine(t, false)
+	body := `{"protocol":"vnc"}`
+	resp := ut.PerformRequest(h.Engine, http.MethodPost, "/api/v1/instances/"+instanceID+"/console",
+		&ut.Body{Body: bytes.NewBufferString(body), Len: len(body)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	).Result()
+	if resp.StatusCode() != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", resp.StatusCode(), resp.Body())
+	}
+	if !strings.Contains(string(resp.Body()), "session_id") || !strings.Contains(string(resp.Body()), "connect_url") {
+		t.Fatalf("body = %s, want session_id and connect_url", resp.Body())
+	}
+	if !strings.Contains(string(resp.Body()), `"protocol":"vnc"`) {
+		t.Fatalf("body = %s, want protocol vnc", resp.Body())
+	}
+}
+
+func TestCreateConsoleSessionNonVMReturns400(t *testing.T) {
+	h := server.New()
+	h.Use(func(ctx context.Context, c *app.RequestContext) {
+		c.Set("tenant_id", "tenant-a")
+		c.Set("user_id", "user-a")
+		c.Next(ctx)
+	})
+	registerDemoInstancesWithObservability(h.Group("/api/v1"), nil, false, nil)
+	// create a container instance via HTTP
+	createBody := `{"kind":"container","name":"demo-console-nonvm","idempotency_key":"create-nonvm"}`
+	createResp := ut.PerformRequest(h.Engine, http.MethodPost, "/api/v1/instances",
+		&ut.Body{Body: bytes.NewBufferString(createBody), Len: len(createBody)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	).Result()
+	if createResp.StatusCode() != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201; body=%s", createResp.StatusCode(), createResp.Body())
+	}
+	instanceID := extractInstanceID(string(createResp.Body()))
+	if instanceID == "" {
+		t.Fatalf("could not extract instance id from %s", createResp.Body())
+	}
+	body := `{"protocol":"vnc"}`
+	resp := ut.PerformRequest(h.Engine, http.MethodPost, "/api/v1/instances/"+instanceID+"/console",
+		&ut.Body{Body: bytes.NewBufferString(body), Len: len(body)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	).Result()
+	if resp.StatusCode() != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", resp.StatusCode(), resp.Body())
+	}
+}
+
+func TestCreateConsoleSessionInvalidProtocolReturns400(t *testing.T) {
+	h, instanceID := newDemoConsoleEngine(t, false)
+	body := `{"protocol":"rdp"}`
+	resp := ut.PerformRequest(h.Engine, http.MethodPost, "/api/v1/instances/"+instanceID+"/console",
+		&ut.Body{Body: bytes.NewBufferString(body), Len: len(body)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	).Result()
+	if resp.StatusCode() != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", resp.StatusCode(), resp.Body())
+	}
+}
+
+func TestCreateConsoleSessionNotRunningReturns422(t *testing.T) {
+	h := server.New()
+	h.Use(func(ctx context.Context, c *app.RequestContext) {
+		c.Set("tenant_id", "tenant-a")
+		c.Set("user_id", "user-a")
+		c.Next(ctx)
+	})
+	registerDemoInstancesWithObservability(h.Group("/api/v1"), nil, false, nil)
+	createBody := `{"kind":"vm","name":"demo-vm-stopped","idempotency_key":"create-stopped-vm"}`
+	createResp := ut.PerformRequest(h.Engine, http.MethodPost, "/api/v1/instances",
+		&ut.Body{Body: bytes.NewBufferString(createBody), Len: len(createBody)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	).Result()
+	if createResp.StatusCode() != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201; body=%s", createResp.StatusCode(), createResp.Body())
+	}
+	instanceID := extractInstanceID(string(createResp.Body()))
+	if instanceID == "" {
+		t.Fatalf("could not extract instance id from %s", createResp.Body())
+	}
+	// stop the vm
+	stopBody := `{"action":"stop","idempotency_key":"stop-vm-console"}`
+	stopResp := ut.PerformRequest(h.Engine, http.MethodPost, "/api/v1/instances/"+instanceID+"/lifecycle",
+		&ut.Body{Body: bytes.NewBufferString(stopBody), Len: len(stopBody)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	).Result()
+	if stopResp.StatusCode() != http.StatusOK {
+		t.Fatalf("stop status = %d, want 200; body=%s", stopResp.StatusCode(), stopResp.Body())
+	}
+	body := `{"protocol":"vnc"}`
+	resp := ut.PerformRequest(h.Engine, http.MethodPost, "/api/v1/instances/"+instanceID+"/console",
+		&ut.Body{Body: bytes.NewBufferString(body), Len: len(body)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	).Result()
+	if resp.StatusCode() != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body=%s", resp.StatusCode(), resp.Body())
+	}
+}
+
+func TestCreateConsoleSessionForbiddenReturns403(t *testing.T) {
+	h, _ := newDemoConsoleEngine(t, true)
+	body := `{"protocol":"vnc"}`
+	resp := ut.PerformRequest(h.Engine, http.MethodPost, "/api/v1/instances/any/console",
+		&ut.Body{Body: bytes.NewBufferString(body), Len: len(body)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	).Result()
+	if resp.StatusCode() != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body=%s", resp.StatusCode(), resp.Body())
+	}
+}
+
+func extractInstanceID(body string) string {
+	// the create response serializes to {"instance":{"id":"..."},...}
+	idx := strings.Index(body, `"id":"`)
+	if idx < 0 {
+		return ""
+	}
+	rest := body[idx+len(`"id":"`):]
+	end := strings.Index(rest, `"`)
+	if end < 0 {
+		return ""
+	}
+	return rest[:end]
 }

@@ -80,14 +80,21 @@ func TestKubernetesDryRunRendererInjectsWorkloadIdentityEnvFromSecret(t *testing
 	if err != nil {
 		t.Fatalf("Render() error = %v", err)
 	}
-	content := manifests[0].Content
+	if len(manifests) != 2 {
+		t.Fatalf("Render() expected 2 manifests (deployment + secret), got %d", len(manifests))
+	}
+	deploymentContent := manifests[0].Content
+	secretContent := manifests[1].Content
+	if !strings.Contains(secretContent, "\"token\":\"must-not-render\"") {
+		t.Fatalf("workload identity Secret manifest missing token stringData:\n%s", secretContent)
+	}
 	for _, want := range []string{"ANI_WORKLOAD_TOKEN", "secretKeyRef", "ani-wi-key-1234567890", "ANI_WORKLOAD_ID", "instance-a"} {
-		if !strings.Contains(content, want) {
-			t.Fatalf("rendered identity manifest missing %q:\n%s", want, content)
+		if !strings.Contains(deploymentContent, want) {
+			t.Fatalf("rendered deployment manifest missing %q:\n%s", want, deploymentContent)
 		}
 	}
-	if strings.Contains(content, "must-not-render") {
-		t.Fatalf("rendered manifest leaked workload identity key value:\n%s", content)
+	if strings.Contains(deploymentContent, "must-not-render") {
+		t.Fatalf("deployment manifest leaked workload identity key value:\n%s", deploymentContent)
 	}
 }
 

@@ -238,6 +238,8 @@ func NewCapabilitiesWithConfig(db *pgxpool.Pool, js nats.JetStreamContext, redis
 			runtimeadapter.WithOperationStore(operationStore),
 			runtimeadapter.WithInstanceLifecycleExecutor(lifecycle),
 			runtimeadapter.WithWorkloadIdentityService(workloadIdentity),
+			runtimeadapter.WithInstanceStatusReader(statusReader),
+			runtimeadapter.WithInstanceStatusReconciler(reconciler),
 		),
 		InstanceOps:           instanceOps,
 		InstanceObservability: instanceObservability,

@@ -19,6 +19,8 @@ type RegisterOptions struct {
 	VectorStoreService                    ports.VectorStoreService
 	InstanceObservability                 ports.InstanceObservability
 	InstanceObservabilityUsesInstanceName bool
+	InstanceService                       ports.WorkloadInstanceService
+	ObservabilityService                  ports.ObservabilityService
 }
 
 // Register wires all route groups onto the Hertz server.
@@ -34,10 +36,10 @@ func RegisterWithOptions(h *server.Hertz, options RegisterOptions) {
 	registerBranding(v1)
 	registerTasks(v1)
 	registerAuth(v1)
-	registerObservability(v1)
+	registerObservability(v1, options.ObservabilityService)
 	registerMetering(v1)
 	registerHarbor(v1)
-	registerDemoInstancesWithObservability(v1, options.InstanceObservability, options.InstanceObservabilityUsesInstanceName)
+	registerDemoInstancesWithObservability(v1, options.InstanceObservability, options.InstanceObservabilityUsesInstanceName, options.InstanceService)
 	registerGPUInventoryResourcesWithInventory(v1, options.GPUInventory)
 	registerNetworkResourcesWithService(v1, options.NetworkService)
 	registerStorageResourcesWithService(v1, options.StorageService)

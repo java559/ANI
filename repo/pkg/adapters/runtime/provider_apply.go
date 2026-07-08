@@ -112,6 +112,11 @@ func validateProviderApplyRequest(request ports.WorkloadProviderApplyRequest) er
 		return fmt.Errorf("%w: dry-run manifest count does not match apply request", ports.ErrInvalid)
 	}
 	for _, manifest := range request.Manifests {
+		// Secrets are always provider=kubernetes companion resources; allow them
+		// alongside any primary provider without triggering mixed-provider rejection.
+		if manifest.Kind == "Secret" {
+			continue
+		}
 		if manifest.Provider != provider {
 			return fmt.Errorf("%w: mixed providers are not allowed in one apply batch", ports.ErrInvalid)
 		}

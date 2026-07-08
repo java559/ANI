@@ -26,13 +26,62 @@ func (r *KubernetesDryRunRenderer) Render(ctx context.Context, spec ports.Worklo
 		return nil, err
 	}
 
+	var primary ports.WorkloadManifest
 	switch planned.Kind {
 	case ports.WorkloadKindVM:
-		return []ports.WorkloadManifest{renderVM(planned)}, nil
+		primary = renderVM(planned)
 	case ports.WorkloadKindBatchJob:
-		return []ports.WorkloadManifest{renderJob(planned)}, nil
+		primary = renderJob(planned)
 	default:
-		return []ports.WorkloadManifest{renderDeployment(planned)}, nil
+		primary = renderDeployment(planned)
+	}
+
+	// When a workload identity binding exists, the primary manifest references a
+	// Kubernetes Secret (ani-wi-...) via env[].valueFrom.secretKeyRef. Append the
+	// Secret after the primary workload so that ResourceRefs[0] is the workload
+	// (Observe reads ResourceRefs[0]); both are applied server-side before the pod
+	// is scheduled, so mount order is not an issue.
+	identitySecret := renderWorkloadIdentitySecret(spec)
+	if identitySecret.Name != "" {
+		return []ports.WorkloadManifest{primary, identitySecret}, nil
+	}
+	return []ports.WorkloadManifest{primary}, nil
+}
+
+// renderWorkloadIdentitySecret builds the Kubernetes Secret manifest that backs
+// the ANI_WORKLOAD_TOKEN env var injected by workloadIdentityEnv. Returns a manifest
+// with an empty Name when no identity binding is present (caller must skip it).
+func renderWorkloadIdentitySecret(spec ports.WorkloadSpec) ports.WorkloadManifest {
+	if spec.Identity == nil || spec.Identity.KeyValue == "" {
+		return ports.WorkloadManifest{}
+	}
+	secretName := workloadIdentitySecretName(spec)
+	if secretName == "" {
+		return ports.WorkloadManifest{}
+	}
+	doc := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata": map[string]any{
+			"name":      secretName,
+			"namespace": tenantNamespace(spec.TenantID),
+			"labels": map[string]string{
+				"app.kubernetes.io/managed-by":        "ani-core",
+				"ani.kubercloud.io/workload-identity": spec.Identity.InstanceID,
+			},
+		},
+		"type":       "Opaque",
+		"stringData": map[string]string{"token": spec.Identity.KeyValue},
+	}
+	content, err := json.Marshal(doc)
+	if err != nil {
+		return ports.WorkloadManifest{}
+	}
+	return ports.WorkloadManifest{
+		Provider: "kubernetes",
+		Kind:     "Secret",
+		Name:     secretName,
+		Content:  string(content),
 	}
 }
 
@@ -213,6 +262,9 @@ func workloadIdentitySecretName(spec ports.WorkloadSpec) string {
 	if len(seed) > 24 {
 		seed = seed[:24]
 	}
+	// Truncation may leave a trailing '-' which violates RFC 1123 subdomain
+	// (must start and end with an alphanumeric character).
+	seed = strings.Trim(seed, "-")
 	return "ani-wi-" + seed
 }
 
@@ -221,9 +273,11 @@ func containerResources(spec ports.WorkloadSpec) map[string]any {
 	requests := map[string]string{}
 	if spec.Resources.CPU != "" {
 		requests["cpu"] = spec.Resources.CPU
+		limits["cpu"] = spec.Resources.CPU
 	}
 	if spec.Resources.Memory != "" {
 		requests["memory"] = spec.Resources.Memory
+		limits["memory"] = spec.Resources.Memory
 	}
 	if requiresGPU(spec.Kind) {
 		resourceName := firstNonEmpty(spec.Annotations["ani.kubercloud.io/gpu-resource-name"], "nvidia.com/gpu")

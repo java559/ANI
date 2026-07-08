@@ -19,6 +19,7 @@ func NewLocalAdmissionGuard() *LocalAdmissionGuard {
 			"VirtualMachine": true,
 			"Deployment":     true,
 			"Job":            true,
+			"Secret":         true,
 		},
 	}
 }
@@ -62,6 +63,17 @@ func (g *LocalAdmissionGuard) reviewDocument(doc map[string]any) error {
 	if !ok {
 		return fmt.Errorf("metadata is required")
 	}
+
+	// Secrets are companion resources (workload identity tokens). They are
+	// managed by ANI and don't carry workload labels/annotations, so we only
+	// validate kind + metadata presence for them.
+	if kind == "Secret" {
+		if name, _ := metadata["name"].(string); strings.TrimSpace(name) == "" {
+			return fmt.Errorf("secret name is required")
+		}
+		return nil
+	}
+
 	labels := stringMap(metadata["labels"])
 	annotations := stringMap(metadata["annotations"])
 	if labels["ani.kubercloud.io/tenant-id"] == "" {

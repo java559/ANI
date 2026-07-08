@@ -18,6 +18,7 @@ import { Route as KbIndexRouteImport } from './routes/kb/index'
 import { Route as SettingsApiKeysRouteImport } from './routes/settings/api-keys'
 import { Route as ModelsImportRouteImport } from './routes/models/import'
 import { Route as KbKbIdChatRouteImport } from './routes/kb/$kbId/chat'
+import { Route as ComputeInstancesInstanceIdRouteRouteImport } from './routes/compute/instances/$instanceId/route'
 
 const UsageRoute = UsageRouteImport.update({
   id: '/usage',
@@ -64,6 +65,12 @@ const KbKbIdChatRoute = KbKbIdChatRouteImport.update({
   path: '/kb/$kbId/chat',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ComputeInstancesInstanceIdRouteRoute =
+  ComputeInstancesInstanceIdRouteRouteImport.update({
+    id: '/compute/instances/$instanceId',
+    path: '/compute/instances/$instanceId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -74,6 +81,7 @@ export interface FileRoutesByFullPath {
   '/kb/': typeof KbIndexRoute
   '/models/': typeof ModelsIndexRoute
   '/settings/': typeof SettingsIndexRoute
+  '/compute/instances/$instanceId': typeof ComputeInstancesInstanceIdRouteRoute
   '/kb/$kbId/chat': typeof KbKbIdChatRoute
 }
 export interface FileRoutesByTo {
@@ -85,6 +93,7 @@ export interface FileRoutesByTo {
   '/kb': typeof KbIndexRoute
   '/models': typeof ModelsIndexRoute
   '/settings': typeof SettingsIndexRoute
+  '/compute/instances/$instanceId': typeof ComputeInstancesInstanceIdRouteRoute
   '/kb/$kbId/chat': typeof KbKbIdChatRoute
 }
 export interface FileRoutesById {
@@ -97,6 +106,7 @@ export interface FileRoutesById {
   '/kb/': typeof KbIndexRoute
   '/models/': typeof ModelsIndexRoute
   '/settings/': typeof SettingsIndexRoute
+  '/compute/instances/$instanceId': typeof ComputeInstancesInstanceIdRouteRoute
   '/kb/$kbId/chat': typeof KbKbIdChatRoute
 }
 export interface FileRouteTypes {
@@ -110,6 +120,7 @@ export interface FileRouteTypes {
     | '/kb/'
     | '/models/'
     | '/settings/'
+    | '/compute/instances/$instanceId'
     | '/kb/$kbId/chat'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -121,6 +132,7 @@ export interface FileRouteTypes {
     | '/kb'
     | '/models'
     | '/settings'
+    | '/compute/instances/$instanceId'
     | '/kb/$kbId/chat'
   id:
     | '__root__'
@@ -132,6 +144,7 @@ export interface FileRouteTypes {
     | '/kb/'
     | '/models/'
     | '/settings/'
+    | '/compute/instances/$instanceId'
     | '/kb/$kbId/chat'
   fileRoutesById: FileRoutesById
 }
@@ -144,6 +157,7 @@ export interface RootRouteChildren {
   KbIndexRoute: typeof KbIndexRoute
   ModelsIndexRoute: typeof ModelsIndexRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
+  ComputeInstancesInstanceIdRouteRoute: typeof ComputeInstancesInstanceIdRouteRoute
   KbKbIdChatRoute: typeof KbKbIdChatRoute
 }
 
@@ -212,6 +226,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof KbKbIdChatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/compute/instances/$instanceId': {
+      id: '/compute/instances/$instanceId'
+      path: '/compute/instances/$instanceId'
+      fullPath: '/compute/instances/$instanceId'
+      preLoaderRoute: typeof ComputeInstancesInstanceIdRouteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -224,6 +245,7 @@ const rootRouteChildren: RootRouteChildren = {
   KbIndexRoute: KbIndexRoute,
   ModelsIndexRoute: ModelsIndexRoute,
   SettingsIndexRoute: SettingsIndexRoute,
+  ComputeInstancesInstanceIdRouteRoute: ComputeInstancesInstanceIdRouteRoute,
   KbKbIdChatRoute: KbKbIdChatRoute,
 }
 export const routeTree = rootRouteImport

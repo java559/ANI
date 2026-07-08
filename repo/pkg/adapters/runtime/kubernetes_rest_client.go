@@ -131,20 +131,21 @@ func readKubernetesServiceAccountToken(path string) (string, error) {
 }
 
 func kubernetesHTTPClient(caFile string, inCluster bool) (*http.Client, error) {
-	if !inCluster {
-		return http.DefaultClient, nil
-	}
 	caPath := strings.TrimSpace(caFile)
-	if caPath == "" {
+	if inCluster && caPath == "" {
 		caPath = defaultKubernetesServiceAccountCAFile
+	}
+	// 非 in-cluster 模式下没有配置 CAFile 时，直接使用默认 client（保持既有行为）
+	if caPath == "" {
+		return http.DefaultClient, nil
 	}
 	caData, err := os.ReadFile(caPath)
 	if err != nil {
-		return nil, fmt.Errorf("%w: Kubernetes in-cluster CA bundle is required: %v", ports.ErrInvalid, err)
+		return nil, fmt.Errorf("%w: Kubernetes CA bundle is required: %v", ports.ErrInvalid, err)
 	}
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(caData) {
-		return nil, fmt.Errorf("%w: Kubernetes in-cluster CA bundle is invalid", ports.ErrInvalid)
+		return nil, fmt.Errorf("%w: Kubernetes CA bundle is invalid", ports.ErrInvalid)
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}

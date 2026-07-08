@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -30,12 +31,13 @@ type PrometheusInstanceObservabilityConfig struct {
 }
 
 type PrometheusInstanceObservability struct {
-	prometheusURL string
-	kubeClient    *KubernetesRESTClient
-	execBaseURL   string
-	now           func() time.Time
-	mu            sync.RWMutex
-	sessions      map[string]ports.InstanceExecSessionRecord
+	prometheusURL   string
+	kubeClient      *KubernetesRESTClient
+	execBaseURL     string
+	now             func() time.Time
+	mu              sync.RWMutex
+	sessions        map[string]ports.InstanceExecSessionRecord
+	consoleSessions map[string]ports.InstanceConsoleSessionRecord
 }
 
 func NewPrometheusInstanceObservability(config PrometheusInstanceObservabilityConfig) (*PrometheusInstanceObservability, error) {
@@ -62,11 +64,12 @@ func NewPrometheusInstanceObservability(config PrometheusInstanceObservabilityCo
 		now = time.Now
 	}
 	return &PrometheusInstanceObservability{
-		prometheusURL: prometheusURL,
-		kubeClient:    client,
-		execBaseURL:   strings.TrimRight(firstNonEmpty(strings.TrimSpace(config.ExecBaseURL), "ws://127.0.0.1:8080/api/v1"), "/"),
-		now:           now,
-		sessions:      make(map[string]ports.InstanceExecSessionRecord),
+		prometheusURL:   prometheusURL,
+		kubeClient:      client,
+		execBaseURL:     strings.TrimRight(firstNonEmpty(strings.TrimSpace(config.ExecBaseURL), "ws://127.0.0.1:8080/api/v1"), "/"),
+		now:             now,
+		sessions:        make(map[string]ports.InstanceExecSessionRecord),
+		consoleSessions: make(map[string]ports.InstanceConsoleSessionRecord),
 	}, nil
 }
 
@@ -105,19 +108,118 @@ func (o *PrometheusInstanceObservability) GetMetrics(ctx context.Context, reques
 	if err := validateInstanceObservationIdentity(request.TenantID, request.InstanceID); err != nil {
 		return ports.InstanceMetricsRecord{}, err
 	}
-	query := fmt.Sprintf(`container_cpu_usage_seconds_total{namespace=%q,pod=%q}`, tenantNamespace(request.TenantID), request.InstanceID)
-	sample, err := o.queryPrometheusScalar(ctx, query)
-	if err != nil {
-		return ports.InstanceMetricsRecord{}, err
+	namespace := tenantNamespace(request.TenantID)
+	pod := request.InstanceID
+	now := o.now().UTC()
+	record := ports.InstanceMetricsRecord{
+		InstanceID: request.InstanceID,
+		Timestamp:  now,
+		DevProfile: prometheusInstanceObservabilityDevProfile(),
 	}
-	return ports.InstanceMetricsRecord{
-		InstanceID:        request.InstanceID,
-		Timestamp:         sample.Timestamp,
-		CPUUtilizationPct: &sample.Value,
-		DevProfile:        prometheusInstanceObservabilityDevProfile(),
-	}, nil
+
+	// 实例名到真实 pod 名的匹配：container/batch 渲染为 Deployment/Job，
+	// K8s 生成的 pod 名带 ReplicaSet/Job hash 后缀（如 name-<hash>-<hash>），
+	// 用正则 pod=~"^name(-.*)?$" 同时匹配直接 Pod 与控制器生成的 pod。
+	// 用 sum() 聚合消除多 series 非确定性：正则可能匹配多个 pod 或同一 pod
+	// 多 container，sum() 将多 series 合并为单一标量，避免 Result[0] 取值不稳定。
+	podMatcher := promQLPodMatcher(pod)
+
+	// metrics.k8s.io exporter：CPU、内存、网络
+	// 单个 exporter 不可用时不阻塞其他字段采集；已采集字段正常返回，不可采集字段为 nil。
+	// container!="",container!="POD" 过滤 pause container 与 pod 级聚合 series，
+	// 确保取到业务 container 的指标而非 pause 容器或 cAdvisor 聚合值。
+	if sample, err := o.queryPrometheusScalar(ctx, fmt.Sprintf(`sum(container_cpu_usage_seconds_total{namespace=%q,pod=~%q,container!="",container!="POD"})`, namespace, podMatcher)); err == nil {
+		record.CPUUtilizationPct = &sample.Value
+		if !sample.Timestamp.IsZero() {
+			record.Timestamp = sample.Timestamp
+		}
+	}
+	if sample, err := o.queryPrometheusScalar(ctx, fmt.Sprintf(`sum(container_memory_working_set_bytes{namespace=%q,pod=~%q,container!="",container!="POD"})`, namespace, podMatcher)); err == nil {
+		mb := sample.Value / 1024 / 1024
+		record.MemoryUsedMB = &mb
+		if !sample.Timestamp.IsZero() {
+			record.Timestamp = sample.Timestamp
+		}
+	}
+	// memory_total_mb：从 container_spec_memory_limit_bytes 读取容器内存 limit。
+	// limit=0（未设 limits）时该查询返回空，MemoryTotalMB 保持 nil（不伪造 0）。
+	if sample, err := o.queryPrometheusScalar(ctx, fmt.Sprintf(`sum(container_spec_memory_limit_bytes{namespace=%q,pod=~%q,container!="",container!="POD"})`, namespace, podMatcher)); err == nil && sample.Value > 0 {
+		mb := sample.Value / 1024 / 1024
+		record.MemoryTotalMB = &mb
+		if !sample.Timestamp.IsZero() {
+			record.Timestamp = sample.Timestamp
+		}
+	}
+	if sample, err := o.queryPrometheusScalar(ctx, fmt.Sprintf(`sum(container_network_receive_bytes_total{namespace=%q,pod=~%q})`, namespace, podMatcher)); err == nil {
+		v := int64(sample.Value)
+		record.NetworkRXBytes = &v
+		if !sample.Timestamp.IsZero() {
+			record.Timestamp = sample.Timestamp
+		}
+	}
+	if sample, err := o.queryPrometheusScalar(ctx, fmt.Sprintf(`sum(container_network_transmit_bytes_total{namespace=%q,pod=~%q})`, namespace, podMatcher)); err == nil {
+		v := int64(sample.Value)
+		record.NetworkTXBytes = &v
+		if !sample.Timestamp.IsZero() {
+			record.Timestamp = sample.Timestamp
+		}
+	}
+
+	// DCGM exporter：GPU 利用率与显存（仅 gpu_container）
+	// 非 gpu_container 的 GPU 字段为 nil（禁止用 0 代替缺失）。
+	// 带 namespace 过滤避免跨租户/跨 namespace 同名 pod 误匹配。
+	// sum() 聚合多 GPU series，避免 Result[0] 非确定性。
+	if request.Kind == ports.WorkloadKindGPUContainer {
+		if sample, err := o.queryPrometheusScalar(ctx, fmt.Sprintf(`sum(DCGM_FI_DEV_GPU_UTIL{namespace=%q,pod=~%q})`, namespace, podMatcher)); err == nil {
+			record.GPUUtilizationPct = &sample.Value
+			if !sample.Timestamp.IsZero() {
+				record.Timestamp = sample.Timestamp
+			}
+		}
+		if sample, err := o.queryPrometheusScalar(ctx, fmt.Sprintf(`sum(DCGM_FI_DEV_FB_USED{namespace=%q,pod=~%q})`, namespace, podMatcher)); err == nil {
+			mb := sample.Value / 1024 / 1024
+			record.GPUMemoryUsedMB = &mb
+			if !sample.Timestamp.IsZero() {
+				record.Timestamp = sample.Timestamp
+			}
+		}
+		if sample, err := o.queryPrometheusScalar(ctx, fmt.Sprintf(`sum(DCGM_FI_DEV_FB_TOTAL{namespace=%q,pod=~%q})`, namespace, podMatcher)); err == nil {
+			mb := sample.Value / 1024 / 1024
+			record.GPUMemoryTotalMB = &mb
+			if !sample.Timestamp.IsZero() {
+				record.Timestamp = sample.Timestamp
+			}
+		}
+	}
+
+	return record, nil
 }
 
+// promQLPodMatcher 构造 PromQL pod label 正则匹配器，兼容直接 Pod（无后缀）
+// 与 Deployment/Job 控制器生成的 pod（name-<hash>[-<hash>]）。
+// 返回带锚定的正则 ^name(-.*)?$，配合 pod=~ 使用。
+func promQLPodMatcher(pod string) string {
+	// 转义 PromQL 正则中的元字符，避免实例名含特殊字符时注入。
+	escaped := strings.NewReplacer(
+		`\`, `\\`,
+		`^`, `\^`,
+		`$`, `\$`,
+		`.`, `\.`,
+		`*`, `\*`,
+		`+`, `\+`,
+		`?`, `\?`,
+		`(`, `\(`,
+		`)`, `\)`,
+		`[`, `\[`,
+		`]`, `\]`,
+		`{`, `\{`,
+		`}`, `\}`,
+		`|`, `\|`,
+	).Replace(pod)
+	return "^" + escaped + "(-.*)?$"
+}
+
+// ListSecurityEvents 返回 K8s Warning 事件作为安全事件列表。
 func (o *PrometheusInstanceObservability) ListSecurityEvents(ctx context.Context, request ports.InstanceObservationListRequest) (ports.InstanceSecurityEventListResult, error) {
 	if err := validateInstanceObservationIdentity(request.TenantID, request.InstanceID); err != nil {
 		return ports.InstanceSecurityEventListResult{}, err
@@ -145,6 +247,7 @@ func (o *PrometheusInstanceObservability) ListSecurityEvents(ctx context.Context
 	return ports.InstanceSecurityEventListResult{Items: items, Total: len(items), DevProfile: prometheusInstanceObservabilityDevProfile()}, nil
 }
 
+// CreateExecSession 为实例创建 exec 会话记录，支持幂等。
 func (o *PrometheusInstanceObservability) CreateExecSession(_ context.Context, request ports.InstanceExecSessionCreateRequest) (ports.InstanceExecSessionRecord, error) {
 	if err := validateInstanceObservationIdentity(request.TenantID, request.InstanceID); err != nil {
 		return ports.InstanceExecSessionRecord{}, err
@@ -175,6 +278,44 @@ func (o *PrometheusInstanceObservability) CreateExecSession(_ context.Context, r
 		return existing, nil
 	}
 	o.sessions[key] = record
+	return record, nil
+}
+
+func (o *PrometheusInstanceObservability) CreateConsoleSession(_ context.Context, request ports.InstanceConsoleSessionCreateRequest) (ports.InstanceConsoleSessionRecord, error) {
+	if err := validateInstanceObservationIdentity(request.TenantID, request.InstanceID); err != nil {
+		return ports.InstanceConsoleSessionRecord{}, err
+	}
+	protocol := normalizeConsoleProtocol(request.Protocol)
+	idempotencyKey := strings.TrimSpace(request.IdempotencyKey)
+	key := request.TenantID + "/" + request.InstanceID + "/" + protocol
+	if idempotencyKey != "" {
+		key += "/" + idempotencyKey
+	}
+	o.mu.RLock()
+	if record, ok := o.consoleSessions[key]; ok {
+		o.mu.RUnlock()
+		return record, nil
+	}
+	o.mu.RUnlock()
+
+	now := o.now().UTC()
+	sessionID := uuid.NewString()
+	connectURL := o.execBaseURL + "/instances/" + url.PathEscape(request.InstanceID) + "/console/" + sessionID
+	record := ports.InstanceConsoleSessionRecord{
+		SessionID:  sessionID,
+		InstanceID: request.InstanceID,
+		Protocol:   protocol,
+		ConnectURL: connectURL,
+		URL:        connectURL,
+		ExpiresAt:  now.Add(15 * time.Minute),
+		DevProfile: prometheusInstanceObservabilityDevProfile(),
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if existing, ok := o.consoleSessions[key]; ok {
+		return existing, nil
+	}
+	o.consoleSessions[key] = record
 	return record, nil
 }
 
@@ -298,12 +439,14 @@ func parseKubernetesTimestamp(value string, fallback time.Time) time.Time {
 type prometheusQueryResponse struct {
 	Status string `json:"status"`
 	Data   struct {
-		Result []prometheusVectorResult `json:"result"`
+		ResultType string                   `json:"resultType"`
+		Result     []prometheusVectorResult `json:"result"`
 	} `json:"data"`
 }
 
 type prometheusVectorResult struct {
-	Value []any `json:"value"`
+	Metric map[string]string `json:"metric"`
+	Value  []any             `json:"value"`
 }
 
 type prometheusScalarSample struct {
@@ -331,6 +474,11 @@ func (r prometheusVectorResult) scalar(fallback time.Time) (prometheusScalarSamp
 	parsed, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
 		return prometheusScalarSample{}, err
+	}
+	// 过滤 NaN/Inf：Prometheus 除零（如内存利用率 used/limit 当 limit=0）会返回 +Inf 或 NaN，
+	// Go encoding/json 无法序列化这些值会触发 panic。返回错误让上层降级为 nil 字段或空结果。
+	if math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+		return prometheusScalarSample{}, fmt.Errorf("%w: Prometheus sample value is NaN or Inf", ports.ErrInvalid)
 	}
 	return prometheusScalarSample{Timestamp: timestamp, Value: parsed}, nil
 }

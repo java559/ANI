@@ -149,6 +149,11 @@ func validateProviderManifestBatch(manifests []ports.WorkloadManifest) error {
 	}
 	provider := manifests[0].Provider
 	for _, manifest := range manifests {
+		// Secrets are always provider=kubernetes companion resources; allow them
+		// alongside any primary provider without triggering mixed-provider rejection.
+		if manifest.Kind == "Secret" {
+			continue
+		}
 		if manifest.Provider != provider {
 			return fmt.Errorf("%w: mixed providers are not allowed in one provider batch", ports.ErrInvalid)
 		}

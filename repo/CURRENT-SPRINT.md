@@ -51,6 +51,40 @@
 | 对象存储 bucket/upload/download | MinIO（已选 2026-06-19，S3 兼容 pre-signed URL） | `ports.ObjectStore` + `ports.StorageService` / `storage_resources.go` | **production-shaped gate passed**（`SPRINT13-OBJECTSTORE-MINIO-A-TRACK`；result：`sprint13-objectstore-minio-live-result.md`；evidence：`live-evidence/sprint13-objectstore-minio-live-evidence.json`；gate：`validate-object-store-live-gate`） |
 | 向量文档写入 | Milvus（已选 2026-06-19） | `ports.VectorStore` + `ports.VectorStoreService` / `vector_store_resources.go` | **production-shaped gate passed**（`SPRINT13-VECTOR-MILVUS-A-TRACK`；B 轨 live result `sprint13-vector-milvus-live-result.md`；evidence：`live-evidence/sprint13-vector-milvus-live-evidence.json`；readiness：`sprint13-vector-milvus-readiness.md`；gate：`validate-vector-store-live-gate`；历史 LIVE PENDING token 仅作门禁兼容语境；不代表 full platform production ready） |
 
+## Sprint 15：Console Instance Observability（✅ 已完成，2026-07-08）
+
+> 本节记录统一实例可观测性 PRD（`repo/services/tasks/modules/prd/console/compute/prd-console-instance-observability.md`）对应的 11 个 issue 执行完成事实。该 PRD 覆盖 Core 端 handler 补齐、Console UI 6 个 Tab 组件实现和 Gateway real K8s provider 链路接入，对应 9 种计算实例 kind（vm/container/gpu_container/sandbox/batch_job/notebook/k8s_cluster/bare_metal/dpu_node）的日志、事件、指标、终端/console 和安全事件能力。各 issue 的实现与验证细节见 `repo/development-records/` 对应批次记录。
+
+### Core 端实现（Issue #001 / #002 / #011）
+
+| 批次 | Issue | 内容摘要 | 状态 |
+|---|---|---|---|
+| CORE-CONSOLE-SESSION-HANDLER-A | #001 | VM console session handler 补全：新增 `CreateConsoleSession` port 方法 + Local/Prometheus adapter 实现 + 5 个 HTTP 测试；protocol 默认值在 adapter 层填充，白名单在 handler 层校验；`connect_url` 与 `url` 等价 | ✅ 已完成（2026-07-03） |
+| CORE-INSTANCE-METRICS-MULTI-EXPORTER-A | #002 | 多 exporter 聚合 adapter + range query 端点：通过 `InstanceObservationGetRequest.Kind` 路由 GPU 采集；逐字段降级（`if err == nil` 守卫）；新增 `GET /observability/query_range` 返回 matrix 时序采样点；PromQL label 重写（namespace/pod 映射）；NaN/Inf 过滤；正则 pod matcher 兼容 Deployment hash 后缀 | ✅ 已完成（2026-07-06，增量 2026-07-08） |
+| GATEWAY-INSTANCE-CREATE-REAL-K8S-PROVIDER-A | #011 | Gateway 实例创建链路接入 real K8s provider：新增 `bootstrap.ConnectInstanceService` helper；`instance_service_runtime.go` 按 `WORKLOAD_PROVIDER` env 切换；lazy re-observe（非终态实例 Get/List 时触发 K8s 状态同步）；Workload Identity Secret manifest 生成；auth.go 注入 `types.TenantContext`；Secret 脱敏；`make validate-architecture` 通过 | ✅ 已完成（2026-07-08） |
+
+### Console UI 端实现（Issue #003 - #010）
+
+| 批次 | Issue | 内容摘要 | 状态 |
+|---|---|---|---|
+| CONSOLE-INSTANCE-OBSERVABILITY-SHELL-A | #003 | 路由壳层 + 实例上下文：新建 `route.tsx`（PageHeader + Tab 栏 + Tab Panel + `?tab=` 深链 + deleted 拦截）、`InstanceContext.tsx`、`observabilityTabsConfig.ts`；深链回退双层判定；`InstanceContext` 暴露 `isDeleted`/`isRunning` 派生字段 | ✅ 已完成（2026-07-06） |
+| CONSOLE-INSTANCE-OBSERVABILITY-LOGS-A | #004 | 日志 Tab：`LogsTab.tsx` 使用 `useInfiniteQuery` cursor 分页 + 级别筛选 Select + Table 列展示；`levelFilter` 空字符串映射为 `undefined` | ✅ 已完成（2026-07-06） |
+| CONSOLE-INSTANCE-OBSERVABILITY-EVENTS-A | #005 | 事件 Tab：`EventsTab.tsx` 使用 `useQuery` 一次性加载 limit=100 + 类型筛选 Select；cursor 分页因 Core OpenAPI `listInstanceEvents` query 缺 `cursor` 入参而降级为一次性加载 | ✅ 已完成（2026-07-06） |
+| CONSOLE-INSTANCE-OBSERVABILITY-METRICS-A | #006 | 指标 Tab（双通道）：`MetricsTab.tsx` 双通道布局、`MetricsSnapshot.tsx` 快照卡片、`MetricsChart.tsx` PromQL 时序图、`promqlTemplates.ts` 冻结模板；403 判断 `error.code==='FORBIDDEN'`；自动刷新用 `invalidateQueries`；后改为 range query（`/observability/query_range`） | ✅ 已完成（2026-07-06，增量 2026-07-08） |
+| CONSOLE-INSTANCE-OBSERVABILITY-TERMINAL-A | #007 | 终端 Tab（exec）：`TerminalTab.tsx` — POST exec → ws_url → WebSocket + xterm.js；5 态状态机；`idempotency_key` 生命周期（重试复用，重连新生成）；xterm lazy 创建于 `ws.onopen` | ✅ 已完成（2026-07-06） |
+| CONSOLE-INSTANCE-OBSERVABILITY-CONSOLE-A | #008 | 控制台 Tab（VM console/VNC）：`ConsoleTab.tsx` — 协议 Select + POST console → connect_url → window.open；3 态状态机 | ✅ 已完成（2026-07-06） |
+| CONSOLE-INSTANCE-OBSERVABILITY-SECURITY-EVENTS-A | #009 | 安全事件 Tab（仅 sandbox）：`SecurityEventsTab.tsx` — severity 筛选 Select + Table 列展示；cursor 分页同样 blocked-by-core | ✅ 已完成（2026-07-07） |
+| CONSOLE-INSTANCE-OBSERVABILITY-BROWSER-VERIFICATION-A | #010 | 验证收口批次（verification-only，无代码改动）：9 条 AC 逐条代码审查映射到组件源码行号；验证 SPEC §1.1 五项 Core 端实现落地情况 | ✅ 已完成（2026-07-07） |
+
+### 关键设计决策与已知边界
+
+- **Kind × Tab 矩阵**：container/gpu_container→logs,events,metrics,terminal；sandbox→+security-events；vm→logs,events,metrics,console；batch_job/notebook→logs,events,metrics；k8s_cluster/bare_metal/dpu_node→logs,events（无 metrics）
+- **指标双通道**：快照（`getInstanceMetrics` ← adapter ← exporter）+ 时序（`/observability/query_range` PromQL 代理返回 matrix）
+- **多 exporter 聚合**：metrics.k8s.io（CPU/内存/网络）+ DCGM（GPU/显存），仅 `gpu_container` 采集 GPU
+- **cursor 分页 blocked-by-core**：`listInstanceEvents` 和 `listInstanceSecurityEvents` query 缺 `cursor` 入参（response 有 `next_cursor`），遵守契约不发明字段，降级为一次性加载
+- **后端 WebSocket exec 服务端未实现**：SPEC §11.2 已知边界，归后续 Core 批次
+- **Issue #011 lazy re-observe**：非终态实例在 Get/List 时触发 K8s 状态同步，避免引入后台 controller
+
 ## Sprint 12 已完成切片
 
 1. `SPRINT12-KICKOFF-A`：Sprint 12 启动 + GAP 分析归档，规划 19 个 Core handler 缺口 + 2 个 422，分 B1/B2/B3 三批；仅 ANI Core，Tier1 local profile。

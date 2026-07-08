@@ -62,3 +62,25 @@ func ConnectMetadataStore(ctx context.Context, databaseURL string) (ports.Metada
 	}
 	return postgresadapter.NewMetadataStore(pool), pool.Close, nil
 }
+
+// ConnectInstanceService connects to the database and assembles the real-K8s
+// provider WorkloadInstanceService via NewCapabilitiesWithConfig. It lets the
+// Gateway indirectly use the real K8s provider chain without owning adapter
+// construction (keeps component boundary guards intact). The returned close
+// function closes the underlying DB pool; nil close is a no-op on error.
+func ConnectInstanceService(ctx context.Context, databaseURL string, cfg Config) (ports.WorkloadInstanceService, func(), error) {
+	closeService := func() {}
+	if err := ctx.Err(); err != nil {
+		return nil, closeService, err
+	}
+	pool, err := connectDB(databaseURL)
+	if err != nil {
+		return nil, closeService, err
+	}
+	caps, err := NewCapabilitiesWithConfig(pool, nil, nil, cfg)
+	if err != nil {
+		pool.Close()
+		return nil, closeService, err
+	}
+	return caps.InstanceService, pool.Close, nil
+}

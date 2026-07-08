@@ -19,6 +19,8 @@ type LocalInstanceService struct {
 	identity     ports.WorkloadIdentityService
 	sandbox      ports.SandboxRuntime
 	ops          ports.WorkloadInstanceOps
+	statusReader ports.WorkloadProviderStatusReader
+	reconciler   ports.WorkloadStatusReconciler
 }
 
 type InstanceServiceOption func(*LocalInstanceService)
@@ -44,6 +46,20 @@ func WithWorkloadIdentityService(identity ports.WorkloadIdentityService) Instanc
 func WithSandboxRuntime(sandbox ports.SandboxRuntime) InstanceServiceOption {
 	return func(service *LocalInstanceService) {
 		service.sandbox = sandbox
+	}
+}
+
+// WithInstanceStatusReader enables lazy re-observation of non-terminal instances
+// on Get/List so the DB reflects the real K8s state (e.g. provisioning → running).
+func WithInstanceStatusReader(reader ports.WorkloadProviderStatusReader) InstanceServiceOption {
+	return func(service *LocalInstanceService) {
+		service.statusReader = reader
+	}
+}
+
+func WithInstanceStatusReconciler(reconciler ports.WorkloadStatusReconciler) InstanceServiceOption {
+	return func(service *LocalInstanceService) {
+		service.reconciler = reconciler
 	}
 }
 
@@ -311,7 +327,76 @@ func (s *LocalInstanceService) Get(ctx context.Context, request ports.WorkloadIn
 	if err != nil {
 		return ports.WorkloadInstanceRecord{}, err
 	}
+	// Lazy re-observe non-terminal instances so the DB reflects the real K8s state
+	// (e.g. provisioning → running) without a background controller.
+	if s.shouldReobserve(record) {
+		if refreshed, ok := s.tryReobserve(ctx, record); ok {
+			record = refreshed
+		}
+	}
 	return s.withIdentity(ctx, record), nil
+}
+
+// shouldReobserve returns true when the instance is in a non-terminal state and
+// the status reader + reconciler are configured. Terminal states (running,
+// stopped, failed, deleted) are not re-observed on every Get to avoid extra K8s
+// calls for steady-state instances.
+func (s *LocalInstanceService) shouldReobserve(record ports.WorkloadInstanceRecord) bool {
+	if s.statusReader == nil || s.reconciler == nil {
+		return false
+	}
+	switch record.Status.State {
+	case ports.WorkloadStateProvisioning, ports.WorkloadStatePending, ports.WorkloadStateStarting:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *LocalInstanceService) tryReobserve(ctx context.Context, record ports.WorkloadInstanceRecord) (ports.WorkloadInstanceRecord, bool) {
+	applyResult := ports.WorkloadProviderApplyResult{
+		Applied:      true,
+		Provider:     record.Provider,
+		ResourceRefs: append([]string(nil), record.ResourceRefs...),
+	}
+	observation, err := s.statusReader.Observe(ctx, ports.WorkloadProviderStatusRequest{
+		TenantID:    record.TenantID,
+		InstanceID:  record.InstanceID,
+		Kind:        record.Kind,
+		ApplyResult: applyResult,
+		RequestedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		return record, false
+	}
+	reconcile, err := s.reconciler.Reconcile(ctx, ports.WorkloadReconcileRequest{
+		AuditID: record.AuditID,
+		Current: ports.WorkloadStatus{
+			Ref: ports.WorkloadRef{
+				TenantID:   record.TenantID,
+				InstanceID: record.InstanceID,
+				Kind:       record.Kind,
+				ProviderID: record.Provider,
+			},
+			State:     record.Status.State,
+			Endpoint:  record.Status.Endpoint,
+			NodeName:  record.Status.NodeName,
+			Reason:    record.Status.Reason,
+			UpdatedAt: record.UpdatedAt,
+		},
+		ApplyResult: applyResult,
+		Observation: observation,
+	})
+	if err != nil || !reconcile.Changed {
+		return record, false
+	}
+	updated := record
+	updated.Status = reconcile.Status
+	updated.UpdatedAt = reconcile.ReconciledAt
+	if err := s.store.UpsertStatus(ctx, updated); err != nil {
+		return record, false
+	}
+	return updated, true
 }
 
 func (s *LocalInstanceService) List(ctx context.Context, request ports.WorkloadInstanceListRequest) ([]ports.WorkloadInstanceRecord, error) {
@@ -326,6 +411,11 @@ func (s *LocalInstanceService) List(ctx context.Context, request ports.WorkloadI
 		return nil, err
 	}
 	for i := range records {
+		if s.shouldReobserve(records[i]) {
+			if refreshed, ok := s.tryReobserve(ctx, records[i]); ok {
+				records[i] = refreshed
+			}
+		}
 		records[i] = s.withIdentity(ctx, records[i])
 	}
 	return records, nil

@@ -47,6 +47,12 @@ func (e *LocalProviderDryRun) DryRun(_ context.Context, manifests []ports.Worklo
 
 	provider := manifests[0].Provider
 	for _, manifest := range manifests {
+		// Secrets are always provider=kubernetes companion resources (workload
+		// identity tokens). Allow them alongside any primary provider (e.g. kubevirt
+		// VirtualMachine) without triggering the mixed-provider rejection.
+		if manifest.Kind == "Secret" {
+			continue
+		}
 		if manifest.Provider != provider {
 			return ports.WorkloadProviderDryRunResult{
 				Accepted:      false,
@@ -122,6 +128,10 @@ func validateProviderDryRunDocument(provider string, doc map[string]any) error {
 		case "VolumeSnapshot":
 			if apiVersion != "snapshot.storage.k8s.io/v1" {
 				return fmt.Errorf("kubernetes VolumeSnapshot requires snapshot.storage.k8s.io/v1")
+			}
+		case "Secret":
+			if apiVersion != "v1" {
+				return fmt.Errorf("kubernetes Secret requires v1")
 			}
 		default:
 			return fmt.Errorf("kubernetes provider does not allow kind %q", kind)

@@ -347,6 +347,16 @@ type demoInstanceExecSessionResponse struct {
 	DevProfile coreDevProfileResponse `json:"dev_profile"`
 }
 
+type demoInstanceConsoleSessionResponse struct {
+	SessionID  string                 `json:"session_id"`
+	InstanceID string                 `json:"instance_id"`
+	Protocol   string                 `json:"protocol"`
+	ConnectURL string                 `json:"connect_url"`
+	URL        string                 `json:"url"`
+	ExpiresAt  string                 `json:"expires_at"`
+	DevProfile coreDevProfileResponse `json:"dev_profile"`
+}
+
 type demoManifest struct {
 	Name     string `json:"name"`
 	Kind     string `json:"kind"`
@@ -361,10 +371,24 @@ type demoTimelineStep struct {
 }
 
 func newDemoInstanceAPI() *demoInstanceAPI {
-	return newDemoInstanceAPIWithObservability(nil, false)
+	return newDemoInstanceAPIWithObservability(nil, false, nil)
 }
 
-func newDemoInstanceAPIWithObservability(observability ports.InstanceObservability, useInstanceName bool) *demoInstanceAPI {
+func newDemoInstanceAPIWithObservability(observability ports.InstanceObservability, useInstanceName bool, instanceService ports.WorkloadInstanceService) *demoInstanceAPI {
+	// 优先使用外部注入的 real InstanceService（如 bootstrap.ConnectInstanceService 组装的 real K8s provider 链路）。
+	// 未注入时回退到现有 local 内存闭环，保持 CORE-DEV-PROFILE-A 边界契约不变。
+	if instanceService != nil {
+		operations := runtimeadapter.NewLocalOperationStore()
+		if observability == nil {
+			observability = runtimeadapter.NewLocalInstanceObservabilityService()
+		}
+		return &demoInstanceAPI{
+			service:                       instanceService,
+			operations:                    operations,
+			observability:                 observability,
+			observabilityUsesInstanceName: useInstanceName,
+		}
+	}
 	store := newDemoInstanceStore()
 	operations := runtimeadapter.NewLocalOperationStore()
 	identity := runtimeadapter.NewLocalWorkloadIdentityService()
@@ -401,16 +425,16 @@ func newDemoInstanceAPIWithObservability(observability ports.InstanceObservabili
 }
 
 func registerDemoInstances(v1 *route.RouterGroup) {
-	registerDemoInstancesWithObservability(v1, nil, false)
+	registerDemoInstancesWithObservability(v1, nil, false, nil)
 }
 
-func registerDemoInstancesWithObservability(v1 *route.RouterGroup, observability ports.InstanceObservability, useInstanceName bool) {
-	api := newDemoInstanceAPIWithObservability(observability, useInstanceName)
+func registerDemoInstancesWithObservability(v1 *route.RouterGroup, observability ports.InstanceObservability, useInstanceName bool, instanceService ports.WorkloadInstanceService) {
+	api := newDemoInstanceAPIWithObservability(observability, useInstanceName, instanceService)
 	v1.GET("/instances", api.list)
 	v1.POST("/instances", api.create)
 	v1.GET("/instances/:instance_id", api.get)
 	v1.POST("/instances/:instance_id/lifecycle", api.lifecycle)
-	v1.POST("/instances/:instance_id/console", api.console)
+	v1.POST("/instances/:instance_id/console", api.createConsoleSession)
 	v1.GET("/instances/:instance_id/logs", api.listLogs)
 	v1.GET("/instances/:instance_id/events", api.listEvents)
 	v1.GET("/instances/:instance_id/metrics", api.getMetrics)
@@ -645,6 +669,7 @@ func (api *demoInstanceAPI) getMetrics(ctx context.Context, c *app.RequestContex
 	result, err := api.observability.GetMetrics(ctx, ports.InstanceObservationGetRequest{
 		TenantID:   demoTenantID(c),
 		InstanceID: api.observabilityTargetID(record),
+		Kind:       record.Kind,
 	})
 	if err != nil {
 		writeInstanceObservabilityError(c, err)
@@ -689,6 +714,47 @@ func (api *demoInstanceAPI) createExecSession(ctx context.Context, c *app.Reques
 		return
 	}
 	c.JSON(http.StatusOK, demoInstanceExecSessionFromRecord(result))
+}
+
+func (api *demoInstanceAPI) createConsoleSession(ctx context.Context, c *app.RequestContext) {
+	record, err := api.instanceForObservation(ctx, c)
+	if err != nil {
+		writeInstanceObservabilityError(c, err)
+		return
+	}
+	if record.Kind != ports.WorkloadKindVM {
+		writeDemoError(c, http.StatusBadRequest, "UNSUPPORTED", "console session is only available for vm instances")
+		return
+	}
+	if record.Status.State != ports.WorkloadStateRunning {
+		writeDemoError(c, http.StatusUnprocessableEntity, "PRECONDITION_FAILED", "instance must be running to open a console session")
+		return
+	}
+	var req demoConsoleRequest
+	if len(c.Request.Body()) > 0 {
+		if err := c.BindJSON(&req); err != nil {
+			writeDemoError(c, http.StatusBadRequest, "BAD_REQUEST", "invalid console session request")
+			return
+		}
+	}
+	protocol := strings.ToLower(strings.TrimSpace(req.Protocol))
+	if protocol == "" {
+		protocol = "vnc"
+	}
+	if !isValidConsoleProtocol(protocol) {
+		writeDemoError(c, http.StatusBadRequest, "BAD_REQUEST", "protocol must be one of console, vnc, novnc, serial")
+		return
+	}
+	result, err := api.observability.CreateConsoleSession(ctx, ports.InstanceConsoleSessionCreateRequest{
+		TenantID:   demoTenantID(c),
+		InstanceID: api.observabilityTargetID(record),
+		Protocol:   protocol,
+	})
+	if err != nil {
+		writeInstanceObservabilityError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, demoInstanceConsoleSessionFromRecord(result))
 }
 
 func (api *demoInstanceAPI) listSecurityEvents(ctx context.Context, c *app.RequestContext) {
@@ -1202,12 +1268,18 @@ func demoSnapshotsFromRecord(record ports.WorkloadInstanceRecord) []demoSnapshot
 func demoManifests(manifests []ports.WorkloadManifest) []demoManifest {
 	items := make([]demoManifest, 0, len(manifests))
 	for _, manifest := range manifests {
-		items = append(items, demoManifest{
+		item := demoManifest{
 			Name:     manifest.Name,
 			Kind:     manifest.Kind,
 			Provider: manifest.Provider,
 			Content:  manifest.Content,
-		})
+		}
+		// Workload Identity Secrets carry a plaintext token in stringData; never
+		// expose it in API responses (admission/dry-run/audit only).
+		if manifest.Kind == "Secret" {
+			item.Content = ""
+		}
+		items = append(items, item)
 	}
 	return items
 }
@@ -1333,6 +1405,27 @@ func demoInstanceExecSessionFromRecord(record ports.InstanceExecSessionRecord) d
 		Token:      record.Token,
 		ExpiresAt:  record.ExpiresAt.Format(time.RFC3339),
 		DevProfile: coreDevProfileFromPort(record.DevProfile),
+	}
+}
+
+func demoInstanceConsoleSessionFromRecord(record ports.InstanceConsoleSessionRecord) demoInstanceConsoleSessionResponse {
+	return demoInstanceConsoleSessionResponse{
+		SessionID:  record.SessionID,
+		InstanceID: record.InstanceID,
+		Protocol:   record.Protocol,
+		ConnectURL: record.ConnectURL,
+		URL:        record.URL,
+		ExpiresAt:  record.ExpiresAt.Format(time.RFC3339),
+		DevProfile: coreDevProfileFromPort(record.DevProfile),
+	}
+}
+
+func isValidConsoleProtocol(protocol string) bool {
+	switch protocol {
+	case "console", "vnc", "novnc", "serial":
+		return true
+	default:
+		return false
 	}
 }
 

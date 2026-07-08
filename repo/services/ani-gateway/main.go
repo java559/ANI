@@ -82,12 +82,35 @@ func main() {
 			"prometheus_configured", strings.TrimSpace(instanceObservabilityRuntimeConfig.PrometheusURL) != "",
 		)
 	}
+	instanceServiceRuntimeConfig := gatewayInstanceServiceRuntimeConfigFromEnv()
+	instanceService, closeInstanceService, err := newGatewayInstanceService(runtimeCtx, instanceServiceRuntimeConfig)
+	if err != nil {
+		logger.Error("failed to configure instance service provider runtime", "err", err)
+		os.Exit(1)
+	}
+	defer closeInstanceService()
+	if instanceService != nil {
+		logger.Info("instance service provider runtime configured",
+			"provider", strings.TrimSpace(instanceServiceRuntimeConfig.WorkloadProvider),
+			"apply_enabled", instanceServiceRuntimeConfig.WorkloadProviderApplyEnabled,
+		)
+	}
 	gatewayStore, closeGatewayStore, err := bootstrap.ConnectRedisCacheStoreWithConfig(gatewayRedisConfigFromEnv())
 	if err != nil {
 		logger.Error("failed to configure gateway shared store", "err", err)
 		os.Exit(1)
 	}
 	defer closeGatewayStore()
+	observabilityService, err := newGatewayObservabilityService(gatewayObservabilityRuntimeConfigFromEnv(instanceService))
+	if err != nil {
+		logger.Error("failed to configure observability provider runtime", "err", err)
+		os.Exit(1)
+	}
+	if observabilityService != nil {
+		logger.Info("observability provider runtime configured",
+			"provider", strings.TrimSpace(os.Getenv("INSTANCE_OBSERVABILITY_PROVIDER")),
+		)
+	}
 	middleware.StartAuditWorker()
 	middleware.Register(h, gatewayStore)
 	router.RegisterWithOptions(h, router.RegisterOptions{
@@ -100,6 +123,8 @@ func main() {
 		VectorStoreService:                    vectorStoreService,
 		InstanceObservability:                 instanceObservability,
 		InstanceObservabilityUsesInstanceName: instanceObservabilityUsesInstanceName,
+		InstanceService:                       instanceService,
+		ObservabilityService:                  observabilityService,
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

@@ -1,6 +1,10 @@
 # ANI Monorepo — 统一构建入口
 # 使用方式：make <target>
 
+# 自动加载 .env（存在则注入，不存在不报错），并导出到子进程环境
+-include .env
+export
+
 .PHONY: help deps deps-down deps-status deps-clean \
         tools-proto gen-api gen-console-api gen-proto gen-core-sdk gen-api-docs \
         build build-gateway build-auth-service build-model-service build-task-service build-reconcile-worker build-cli \
