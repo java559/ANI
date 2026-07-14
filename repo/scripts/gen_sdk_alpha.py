@@ -137,6 +137,11 @@ def operation_id(method: str, path: str) -> str:
 
 def write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.suffix == ".go":
+        content = content.replace(
+            chr(9) + '"encoding/json"' + chr(10) + chr(9) + '"encoding/hex"',
+            chr(9) + '"encoding/hex"' + chr(10) + chr(9) + '"encoding/json"',
+        )
     path.write_text(content, encoding="utf-8")
 
 
