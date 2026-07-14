@@ -11,12 +11,20 @@ env:
   PYTHON_VERSION: "3.12"
   NODE_VERSION: "20"
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
 
   # ── Go 服务 CI ──────────────────────────────────────────────────────────────
   go-ci:
     name: Go Build & Test
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: repo
@@ -60,6 +68,7 @@ jobs:
   python-ci:
     name: Python AI Services
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: repo
@@ -76,6 +85,7 @@ jobs:
         run: |
           pip install -r ai/rag-engine/requirements.txt
           pip install ruff mypy pytest pytest-asyncio
+          pip check
 
       - name: Lint
         run: |
@@ -89,6 +99,7 @@ jobs:
   frontend-ci:
     name: Frontend Build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: repo
@@ -117,6 +128,7 @@ jobs:
   services-pr-gate:
     name: Services Boundary / API / Docs Gate
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: repo
@@ -136,7 +148,7 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-          cache-dependency-path: repo/ai/rag-engine/requirements.txt
+          cache-dependency-path: repo/ci/requirements-contract.txt
 
       - uses: actions/setup-node@v4
         with:
@@ -146,8 +158,7 @@ jobs:
 
       - name: Install Python gate dependencies
         run: |
-          pip install -r ai/rag-engine/requirements.txt
-          pip install pyyaml pytest
+          pip install -r ci/requirements-contract.txt
 
       - name: Run Services PR gate
         run: make validate-services
@@ -159,6 +170,7 @@ jobs:
   dependency-scan:
     name: Dependency CVE Scan
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: repo
@@ -182,8 +194,11 @@ jobs:
 
       - name: Scan Go dependencies (govulncheck)
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
+          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+          for module in cli/ani pkg services/ani-gateway services/auth-service services/model-service services/reconcile-worker services/task-service tools/kms-sm4-live-fixture; do
+            echo "→ govulncheck $module"
+            (cd "$module" && govulncheck ./...)
+          done
 
       - name: Scan Python dependencies
         run: |
@@ -194,10 +209,52 @@ jobs:
   api-spec-lint:
     name: OpenAPI Spec Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: repo
     steps:
       - uses: actions/checkout@v4
 
-      - name: Lint OpenAPI Spec
-        uses: swaggerhub-actions/validate-openapi@v1
+      - uses: actions/setup-python@v5
         with:
-          file: repo/api/openapi/v1.yaml
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: repo/ci/requirements-contract.txt
+
+      - name: Install OpenAPI validator
+        run: pip install -r ci/requirements-contract.txt
+
+      - name: Lint Core and Services OpenAPI specs
+        run: python scripts/validate_openapi_spec.py
+
+  required-gates:
+    name: Required PR Gates
+    if: ${{ always() }}
+    needs:
+      - go-ci
+      - python-ci
+      - frontend-ci
+      - services-pr-gate
+      - dependency-scan
+      - api-spec-lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fail closed unless every required job passed
+        env:
+          GO_RESULT: ${{ needs.go-ci.result }}
+          PYTHON_RESULT: ${{ needs.python-ci.result }}
+          FRONTEND_RESULT: ${{ needs.frontend-ci.result }}
+          SERVICES_RESULT: ${{ needs.services-pr-gate.result }}
+          DEPENDENCY_RESULT: ${{ needs.dependency-scan.result }}
+          OPENAPI_RESULT: ${{ needs.api-spec-lint.result }}
+        run: |
+          set -euo pipefail
+          for result in "$GO_RESULT" "$PYTHON_RESULT" "$FRONTEND_RESULT" "$SERVICES_RESULT" "$DEPENDENCY_RESULT" "$OPENAPI_RESULT"; do
+            test "$result" = success || {
+              echo "Required PR Gates blocked by job result: $result"
+              exit 1
+            }
+          done
+          echo "All required PR jobs passed."
