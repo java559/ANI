@@ -400,10 +400,6 @@ func newDemoInstanceAPIWithObservability(observability ports.InstanceObservabili
 	}
 }
 
-func registerDemoInstances(v1 *route.RouterGroup) {
-	registerDemoInstancesWithObservability(v1, nil, false)
-}
-
 func registerDemoInstancesWithObservability(v1 *route.RouterGroup, observability ports.InstanceObservability, useInstanceName bool) {
 	api := newDemoInstanceAPIWithObservability(observability, useInstanceName)
 	v1.GET("/instances", api.list)
@@ -791,11 +787,6 @@ func (api *demoInstanceAPI) consoleExec(ctx context.Context, c *app.RequestConte
 		return
 	}
 	c.JSON(http.StatusOK, result)
-}
-
-func (api *demoInstanceAPI) ensureInstanceExists(ctx context.Context, c *app.RequestContext) error {
-	_, err := api.instanceForObservation(ctx, c)
-	return err
 }
 
 func (api *demoInstanceAPI) instanceForObservation(ctx context.Context, c *app.RequestContext) (ports.WorkloadInstanceRecord, error) {

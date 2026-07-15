@@ -1025,6 +1025,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
+                /** @description 异步任务状态 */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -5266,6 +5267,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description K8s 集群列表 */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5289,6 +5291,7 @@ export interface operations {
             };
         };
         responses: {
+            /** @description K8s 集群创建成功 */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -5315,6 +5318,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description K8s 集群详情 */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5336,6 +5340,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description K8s 集群删除成功 */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5357,6 +5362,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description K8s 集群 kubeconfig */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5384,6 +5390,7 @@ export interface operations {
             };
         };
         responses: {
+            /** @description K8s 集群升级结果 */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5408,6 +5415,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description K8s 集群节点池列表 */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5434,6 +5442,7 @@ export interface operations {
             };
         };
         responses: {
+            /** @description K8s 集群节点池创建成功 */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -5459,6 +5468,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description K8s 集群节点池详情 */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5482,6 +5492,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description K8s 集群节点池删除成功 */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5510,6 +5521,7 @@ export interface operations {
             };
         };
         responses: {
+            /** @description K8s 集群节点池更新成功 */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5538,6 +5550,7 @@ export interface operations {
             };
         };
         responses: {
+            /** @description K8s 集群代理响应 */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5593,6 +5606,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description 加密密钥列表 */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5616,6 +5630,7 @@ export interface operations {
             };
         };
         responses: {
+            /** @description 加密密钥创建成功 */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -5637,6 +5652,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description 加密密钥详情 */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5658,6 +5674,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description 加密密钥删除成功 */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5683,6 +5700,7 @@ export interface operations {
             };
         };
         responses: {
+            /** @description 加密密钥轮换结果 */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5710,6 +5728,7 @@ export interface operations {
             };
         };
         responses: {
+            /** @description 加密密钥吊销成功 */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5735,6 +5754,7 @@ export interface operations {
             };
         };
         responses: {
+            /** @description 加密对象并生成解封令牌成功 */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5760,6 +5780,7 @@ export interface operations {
             };
         };
         responses: {
+            /** @description 对象解封令牌创建成功 */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5784,6 +5805,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description Secret 元数据列表 */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5807,6 +5829,7 @@ export interface operations {
             };
         };
         responses: {
+            /** @description Secret 创建成功 */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -5828,6 +5851,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description Secret 元数据详情 */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5850,6 +5874,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description Secret 删除成功 */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5876,6 +5901,7 @@ export interface operations {
             };
         };
         responses: {
+            /** @description Secret 绑定创建成功 */
             201: {
                 headers: {
                     [name: string]: unknown;

@@ -3247,7 +3247,7 @@ paths:
                   logo_dark_url:  { type: string, format: uri }
                   favicon_url:    { type: string, format: uri }
                   primary_color:  { type: string, example: "#1677FF" }
-                  secondary_color:{ type: string }
+                  secondary_color: { type: string }
                   icp_number:     { type: string }
 
   # ── 实例操作历史（Control Plane 操作追踪）──────────────────────────────────
@@ -3308,6 +3308,7 @@ paths:
         - { name: task_id, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
         "200":
+          description: 异步任务状态
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AsyncTask' }
@@ -3495,6 +3496,7 @@ paths:
         - { name: cursor, in: query, schema: { type: string } }
       responses:
         "200":
+          description: K8s 集群列表
           content:
             application/json:
               schema:
@@ -3512,6 +3514,7 @@ paths:
               $ref: "#/components/schemas/K8sClusterCreateRequest"
       responses:
         "201":
+          description: K8s 集群创建成功
           content:
             application/json:
               schema:
@@ -3537,6 +3540,7 @@ paths:
         - { name: cluster_id, in: path, required: true, schema: { type: string } }
       responses:
         "200":
+          description: K8s 集群详情
           content:
             application/json:
               schema:
@@ -3550,6 +3554,7 @@ paths:
         - { name: cluster_id, in: path, required: true, schema: { type: string } }
       responses:
         "200":
+          description: K8s 集群删除成功
           content:
             application/json:
               schema:
@@ -3566,6 +3571,7 @@ paths:
         - { name: cluster_id, in: path, required: true, schema: { type: string } }
       responses:
         "200":
+          description: K8s 集群 kubeconfig
           content:
             application/json:
               schema:
@@ -3592,6 +3598,7 @@ paths:
               $ref: "#/components/schemas/K8sClusterUpgradeRequest"
       responses:
         "200":
+          description: K8s 集群升级结果
           content:
             application/json:
               schema:
@@ -3614,6 +3621,7 @@ paths:
         - { name: cluster_id, in: path, required: true, schema: { type: string } }
       responses:
         "200":
+          description: K8s 集群节点池列表
           content:
             application/json:
               schema:
@@ -3636,6 +3644,7 @@ paths:
               $ref: "#/components/schemas/K8sClusterNodePoolCreateRequest"
       responses:
         "201":
+          description: K8s 集群节点池创建成功
           content:
             application/json:
               schema:
@@ -3658,6 +3667,7 @@ paths:
         - { name: node_pool_id, in: path, required: true, schema: { type: string } }
       responses:
         "200":
+          description: K8s 集群节点池详情
           content:
             application/json:
               schema:
@@ -3681,6 +3691,7 @@ paths:
               $ref: "#/components/schemas/K8sClusterNodePoolUpdateRequest"
       responses:
         "200":
+          description: K8s 集群节点池更新成功
           content:
             application/json:
               schema:
@@ -3701,6 +3712,7 @@ paths:
         - { name: node_pool_id, in: path, required: true, schema: { type: string } }
       responses:
         "200":
+          description: K8s 集群节点池删除成功
           content:
             application/json:
               schema:
@@ -3727,6 +3739,7 @@ paths:
               $ref: "#/components/schemas/K8sClusterProxyRequest"
       responses:
         "200":
+          description: K8s 集群代理响应
           content:
             application/json:
               schema:
@@ -3772,6 +3785,7 @@ paths:
         - { name: cursor, in: query, schema: { type: string } }
       responses:
         "200":
+          description: 加密密钥列表
           content:
             application/json:
               schema:
@@ -3789,6 +3803,7 @@ paths:
               $ref: "#/components/schemas/EncryptionKeyCreateRequest"
       responses:
         "201":
+          description: 加密密钥创建成功
           content:
             application/json:
               schema:
@@ -3804,6 +3819,7 @@ paths:
         - { name: key_id, in: path, required: true, schema: { type: string } }
       responses:
         "200":
+          description: 加密密钥详情
           content:
             application/json:
               schema:
@@ -3817,6 +3833,7 @@ paths:
         - { name: key_id, in: path, required: true, schema: { type: string } }
       responses:
         "200":
+          description: 加密密钥删除成功
           content:
             application/json:
               schema:
@@ -3839,6 +3856,7 @@ paths:
               $ref: "#/components/schemas/EncryptionKeyRotateRequest"
       responses:
         "200":
+          description: 加密密钥轮换结果
           content:
             application/json:
               schema:
@@ -3865,6 +3883,7 @@ paths:
               $ref: "#/components/schemas/EncryptionKeyRevokeRequest"
       responses:
         "200":
+          description: 加密密钥吊销成功
           content:
             application/json:
               schema:
@@ -3889,6 +3908,7 @@ paths:
               $ref: "#/components/schemas/EncryptionSealRequest"
       responses:
         "200":
+          description: 加密对象并生成解封令牌成功
           content:
             application/json:
               schema:
@@ -3913,6 +3933,7 @@ paths:
               $ref: "#/components/schemas/EncryptionUnsealTokenRequest"
       responses:
         "200":
+          description: 对象解封令牌创建成功
           content:
             application/json:
               schema:
@@ -3934,6 +3955,7 @@ paths:
         - { name: cursor, in: query, schema: { type: string } }
       responses:
         "200":
+          description: Secret 元数据列表
           content:
             application/json:
               schema:
@@ -3952,6 +3974,7 @@ paths:
               $ref: "#/components/schemas/SecretCreateRequest"
       responses:
         "201":
+          description: Secret 创建成功
           content:
             application/json:
               schema:
@@ -3967,6 +3990,7 @@ paths:
         - { name: secret_id, in: path, required: true, schema: { type: string } }
       responses:
         "200":
+          description: Secret 元数据详情
           content:
             application/json:
               schema:
@@ -3982,6 +4006,7 @@ paths:
         - { name: secret_id, in: path, required: true, schema: { type: string } }
       responses:
         "200":
+          description: Secret 删除成功
           content:
             application/json:
               schema:
@@ -4006,6 +4031,7 @@ paths:
               $ref: "#/components/schemas/SecretBindingRequest"
       responses:
         "201":
+          description: Secret 绑定创建成功
           content:
             application/json:
               schema:
