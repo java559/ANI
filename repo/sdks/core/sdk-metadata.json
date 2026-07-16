@@ -533,6 +533,12 @@
       "scope": "scope:observability:read"
     },
     {
+      "operationId": "queryRangeObservability",
+      "method": "GET",
+      "path": "/observability/query_range",
+      "scope": "scope:observability:read"
+    },
+    {
       "operationId": "readiness",
       "method": "GET",
       "path": "/readyz",
@@ -801,6 +807,7 @@
     "ObservabilityAlertRule",
     "ObservabilityAlertRuleListResponse",
     "ObservabilityQueryResponse",
+    "ObservabilityRangeQueryResponse",
     "RefreshAccessTokenRequest",
     "RefreshAccessTokenResponse",
     "RegistryArtifact",
