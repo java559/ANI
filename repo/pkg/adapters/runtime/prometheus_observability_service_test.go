@@ -497,9 +497,9 @@ func TestPrometheusObservabilityServiceQueryRangeFiltersInf(t *testing.T) {
 					{
 						"metric": map[string]string{"container": "test-container-6"},
 						"values": [][]any{
-							{float64(1780000000), "+Inf"},  // 过滤
-							{float64(1780000015), "6.95"},   // 保留
-							{float64(1780000030), "NaN"},    // 过滤
+							{float64(1780000000), "+Inf"}, // 过滤
+							{float64(1780000015), "6.95"}, // 保留
+							{float64(1780000030), "NaN"},  // 过滤
 						},
 					},
 				},

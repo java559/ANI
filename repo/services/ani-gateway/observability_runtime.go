@@ -11,7 +11,7 @@ import (
 
 // gatewayObservabilityRuntimeConfig 装配可观测性 PromQL 代理服务的运行时配置。
 // 复用 INSTANCE_OBSERVABILITY_PROVIDER 与 INSTANCE_OBSERVABILITY_PROMETHEUS_URL
-//（与实例观测快照同一组 env），避免运维同时维护两套可观测性 env。
+// （与实例观测快照同一组 env），避免运维同时维护两套可观测性 env。
 // 当 INSTANCE_OBSERVABILITY_PROVIDER=prometheus_kubernetes 时，
 // 快照指标（GetMetrics）与时序图（Query）链路同时启用真实 Prometheus。
 type gatewayObservabilityRuntimeConfig struct {

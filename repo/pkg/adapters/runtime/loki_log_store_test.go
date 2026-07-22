@@ -209,7 +209,7 @@ func TestParseLokiLogLineFallsBackToPlainText(t *testing.T) {
 }
 
 // TestParseLokiLogLineInfersLevelFromMessage 验证 JSON 日志行无 level 字段时
-//（Fluent-Bit 采集的 nginx/stdout 等非结构化日志常见场景），从 message 内容推断 level，
+// （Fluent-Bit 采集的 nginx/stdout 等非结构化日志常见场景），从 message 内容推断 level，
 // 避免前端级别列显示为空。
 func TestParseLokiLogLineInfersLevelFromMessage(t *testing.T) {
 	ts := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
